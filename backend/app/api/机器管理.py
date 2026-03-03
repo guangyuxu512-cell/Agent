@@ -1,17 +1,21 @@
 # app/api/机器管理.py
 # 影刀机器管理 + 应用绑定 API
-# 包含：machines CRUD、machine_apps CRUD、心跳接口
+# 包含：machines CRUD、machine_apps CRUD、心跳接口、状态回调接口
 
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
+import logging
 
-from app.db.数据库 import 获取数据库
-from app.db.模型 import 机器模型, 机器应用模型
+from app.db.数据库 import 获取数据库, 会话工厂
+from app.db.模型 import 机器模型, 机器应用模型, 任务队列模型
 from app.schemas import 统一响应
+from app.配置 import RPA密钥
+
+logger = logging.getLogger(__name__)
 
 
 机器管理路由 = APIRouter(prefix="/api", tags=["机器管理"])
@@ -42,6 +46,10 @@ class 编辑应用绑定请求(BaseModel):
 class 心跳请求(BaseModel):
     machine_id: str
     shadowbot_running: bool
+
+
+class 状态更新请求(BaseModel):
+    status: str  # idle / running / offline
 
 
 # ==================== 辅助函数 ====================
@@ -234,10 +242,130 @@ async def 机器心跳(请求体: 心跳请求, 数据库: Session = Depends(获
     if not 机器:
         return 统一响应(code=1, msg=f"机器码 '{请求体.machine_id}' 不存在")
 
+    旧状态 = 机器.状态
+    新状态 = "running" if 请求体.shadowbot_running else "idle"
+
     # 更新心跳时间和状态
     机器.最后心跳 = datetime.now()
-    机器.状态 = "running" if 请求体.shadowbot_running else "idle"
+    机器.状态 = 新状态
     机器.更新时间 = datetime.now()
     数据库.commit()
 
+    # 如果状态从 running 变为 idle，检查任务队列
+    if 旧状态 == "running" and 新状态 == "idle":
+        await _处理任务队列(请求体.machine_id, 数据库)
+
     return 统一响应(msg="心跳更新成功")
+
+
+@机器管理路由.put("/machines/{machine_id}/status", response_model=统一响应)
+async def 更新机器状态(
+    machine_id: str,
+    请求体: 状态更新请求,
+    数据库: Session = Depends(获取数据库),
+    x_rpa_key: Optional[str] = Header(None, alias="X-RPA-KEY")
+):
+    """更新机器状态（影刀回调接口，X-RPA-KEY 鉴权）
+
+    请求头：
+        X-RPA-KEY: 影刀推流密钥
+
+    请求体：
+        {"status": "idle"}  或  {"status": "running"}  或  {"status": "offline"}
+
+    返回：
+        {"code": 0, "data": null, "msg": "状态更新成功"}
+    """
+    # X-RPA-KEY 鉴权
+    if not x_rpa_key:
+        logger.warning("更新机器状态失败：缺少 X-RPA-KEY 请求头")
+        return 统一响应(code=403, msg="缺少 X-RPA-KEY 请求头")
+
+    if x_rpa_key != RPA密钥:
+        logger.warning("更新机器状态失败：X-RPA-KEY 错误")
+        return 统一响应(code=403, msg="X-RPA-KEY 错误")
+
+    # 查询机器
+    机器 = 数据库.query(机器模型).filter(机器模型.机器码 == machine_id).first()
+    if not 机器:
+        return 统一响应(code=1, msg=f"机器码 '{machine_id}' 不存在")
+
+    # 验证状态值
+    允许的状态 = ["idle", "running", "offline", "error"]
+    if 请求体.status not in 允许的状态:
+        return 统一响应(code=1, msg=f"无效的状态值，允许的值: {', '.join(允许的状态)}")
+
+    旧状态 = 机器.状态
+    新状态 = 请求体.status
+
+    # 更新状态
+    机器.状态 = 新状态
+    机器.更新时间 = datetime.now()
+    数据库.commit()
+
+    logger.info(f"机器状态已更新: {machine_id} ({旧状态} -> {新状态})")
+
+    # 如果状态从 running 变为 idle，检查任务队列
+    if 旧状态 == "running" and 新状态 == "idle":
+        await _处理任务队列(machine_id, 数据库)
+
+    return 统一响应(msg="状态更新成功")
+
+
+async def _处理任务队列(machine_id: str, 数据库: Session):
+    """检查并处理任务队列（内部函数）"""
+    try:
+        # 查询该机器的等待任务（按创建时间排序）
+        等待任务 = 数据库.query(任务队列模型).filter(
+            任务队列模型.机器码 == machine_id,
+            任务队列模型.状态 == "waiting"
+        ).order_by(任务队列模型.创建时间).first()
+
+        if not 等待任务:
+            logger.debug(f"机器 {machine_id} 无等待任务")
+            return
+
+        # 读取影刀配置（兼容 camelCase 和 snake_case）
+        from app.图引擎.内置工具._配置 import _获取系统配置
+        影刀配置 = _获取系统配置("shadowbot")
+        target_email = 影刀配置.get("target_email") or 影刀配置.get("targetEmail")
+        subject_template = 影刀配置.get("subject_template") or 影刀配置.get("subjectTemplate") or "影刀触发-{app_name}"
+        content_template = 影刀配置.get("content_template") or 影刀配置.get("contentTemplate") or "请执行应用：{app_name}"
+
+        if not target_email:
+            logger.error("未配置影刀目标邮箱，无法自动触发队列任务")
+            等待任务.状态 = "failed"
+            等待任务.错误 = "未配置影刀目标邮箱"
+            数据库.commit()
+            return
+
+        # 发送触发邮件
+        from app.图引擎.内置工具.影刀触发 import _发送触发邮件
+        结果 = await _发送触发邮件(
+            target_email,
+            subject_template.format(app_name=等待任务.应用名),
+            content_template.format(app_name=等待任务.应用名)
+        )
+
+        if 结果.startswith("错误"):
+            # 发送失败
+            logger.error(f"自动触发队列任务失败: {结果}")
+            等待任务.状态 = "failed"
+            等待任务.错误 = 结果
+            数据库.commit()
+            return
+
+        # 发送成功，更新任务状态和机器状态
+        等待任务.状态 = "triggered"
+        等待任务.触发时间 = datetime.now()
+
+        机器 = 数据库.query(机器模型).filter(机器模型.机器码 == machine_id).first()
+        if 机器:
+            机器.状态 = "running"
+            机器.更新时间 = datetime.now()
+
+        数据库.commit()
+        logger.info(f"[任务队列] 自动触发等待任务: {等待任务.应用名} (机器: {machine_id})")
+
+    except Exception as e:
+        logger.error(f"处理任务队列失败: {e}", exc_info=True)

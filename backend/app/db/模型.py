@@ -249,3 +249,16 @@ class 机器应用模型(基础模型):
     描述 = Column("description", Text, default="")
     启用 = Column("enabled", Boolean, default=True)
     创建时间 = Column("created_at", DateTime, default=func.now())
+
+
+# ==================== 表 16：任务队列 ====================
+class 任务队列模型(基础模型):
+    __tablename__ = "task_queue"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    应用名 = Column("app_name", String(100), nullable=False)
+    机器码 = Column("machine_id", String(100), nullable=False)
+    状态 = Column("status", String(20), default="waiting")  # waiting / triggered / failed
+    创建时间 = Column("created_at", DateTime, default=func.now())
+    触发时间 = Column("triggered_at", DateTime, default=None)
+    错误 = Column("error", Text, default=None)

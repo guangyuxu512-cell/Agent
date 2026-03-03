@@ -11,6 +11,8 @@ export interface ConfigData {
     smtpPort: string;
     sender: string;
     smtpPassword: string;
+  };
+  shadowbot: {
     targetEmail: string;
     subjectTemplate: string;
     contentTemplate: string;

@@ -33,7 +33,8 @@ export default function BasicConfig() {
   const defaultConfig: ConfigData = {
     llm: { provider: '', modelName: '', apiUrl: '', apiKey: '' },
     agent: { systemPrompt: '' },
-    email: { smtpServer: '', smtpPort: '', sender: '', smtpPassword: '', targetEmail: '', subjectTemplate: '', contentTemplate: '' },
+    email: { smtpServer: '', smtpPort: '', sender: '', smtpPassword: '' },
+    shadowbot: { targetEmail: '', subjectTemplate: '影刀触发-{app_name}', contentTemplate: '请执行应用：{app_name}' },
     feishu: { appId: '', appSecret: '' },
     n8n: { apiUrl: '', apiKey: '', workflows: [] },
     ragflow: { apiUrl: '', apiKey: '', kbId: '' },
@@ -148,15 +149,19 @@ export default function BasicConfig() {
       </div>
 
       <div className="space-y-8">
-        {/* 邮件 / 影刀 */}
-        <ConfigSection title="邮件 / 影刀">
+        {/* 邮件配置 */}
+        <ConfigSection title="邮件配置">
           <FormRow label="SMTP 服务器"><input type="text" value={formData.email.smtpServer} onChange={(e) => handleInputChange('email', 'smtpServer', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
           <FormRow label="SMTP 端口"><input type="text" value={formData.email.smtpPort} onChange={(e) => handleInputChange('email', 'smtpPort', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
           <FormRow label="发件人"><input type="text" value={formData.email.sender} onChange={(e) => handleInputChange('email', 'sender', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
           <FormRow label="SMTP 密码"><input type="password" value={formData.email.smtpPassword} onChange={(e) => handleInputChange('email', 'smtpPassword', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
-          <FormRow label="影刀目标邮箱"><input type="text" value={formData.email.targetEmail} onChange={(e) => handleInputChange('email', 'targetEmail', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
-          <FormRow label="邮件主题模板"><input type="text" value={formData.email.subjectTemplate} onChange={(e) => handleInputChange('email', 'subjectTemplate', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
-          <FormRow label="邮件内容模板"><input type="text" value={formData.email.contentTemplate} onChange={(e) => handleInputChange('email', 'contentTemplate', e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
+        </ConfigSection>
+
+        {/* 影刀触发 */}
+        <ConfigSection title="影刀触发">
+          <FormRow label="影刀目标邮箱"><input type="text" value={formData.shadowbot.targetEmail} onChange={(e) => handleInputChange('shadowbot', 'targetEmail', e.target.value)} placeholder="影刀监听的邮箱地址" className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
+          <FormRow label="邮件主题模板"><input type="text" value={formData.shadowbot.subjectTemplate} onChange={(e) => handleInputChange('shadowbot', 'subjectTemplate', e.target.value)} placeholder="影刀触发-{app_name}" className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
+          <FormRow label="邮件内容模板"><input type="text" value={formData.shadowbot.contentTemplate} onChange={(e) => handleInputChange('shadowbot', 'contentTemplate', e.target.value)} placeholder="请执行应用：{app_name}" className="w-full px-3 py-2 border border-slate-300 rounded focus:border-blue-500 outline-none" /></FormRow>
         </ConfigSection>
 
         {/* 飞书 */}
