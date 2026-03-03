@@ -28,7 +28,18 @@ class 编排请求(BaseModel):
 async def 获取编排配置(db: Session = Depends(获取数据库)):
     记录 = db.query(编排模型).filter(编排模型.id == "default").first()
     if not 记录:
-        return {"code": 0, "data": None, "msg": "ok"}
+        # 返回默认空配置，确保 data 不是 null
+        return {
+            "code": 0,
+            "data": {
+                "mode": "Supervisor",
+                "entryAgent": "",
+                "routingRules": "",
+                "parallelGroups": "",
+                "globalState": [],
+            },
+            "msg": "ok",
+        }
     return {
         "code": 0,
         "data": {

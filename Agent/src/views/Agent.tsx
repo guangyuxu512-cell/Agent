@@ -74,7 +74,7 @@ export default function Agent() {
     // 编排配置（API 暂未实现，会走 catch）
     try {
       const orchRes = await getOrchestration();
-      if (orchRes.code === 0) {
+      if (orchRes.code === 0 && orchRes.data) {
         setOrchestration(orchRes.data);
       } else {
         setOrchestration({ mode: 'Supervisor', entryAgent: '', routingRules: '', parallelGroups: '', globalState: [] });
