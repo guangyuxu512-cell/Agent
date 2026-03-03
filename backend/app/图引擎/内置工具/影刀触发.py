@@ -3,6 +3,7 @@
 
 import logging
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime
@@ -34,6 +35,14 @@ async def 触发影刀(app_name: str) -> str:
     Returns:
         执行结果消息
     """
+    # 输入校验
+    if not app_name or not app_name.strip():
+        logger.warning("[触发影刀] app_name 参数为空")
+        return "错误：应用名称不能为空"
+
+    # 调试日志：记录接收到的参数
+    logger.debug(f"[触发影刀] 被调用，app_name={repr(app_name)}, type={type(app_name)}, 长度={len(app_name)}")
+
     db = 会话工厂()
     try:
         # 1. 读取影刀配置（兼容 camelCase 和 snake_case）
@@ -46,13 +55,38 @@ async def 触发影刀(app_name: str) -> str:
             return "错误：未配置影刀目标邮箱，请在系统配置中设置 shadowbot 分类的 target_email"
 
         # 2. 查询应用绑定，找到对应的机器
+        # 先查询所有启用的应用，用于调试
+        所有绑定 = db.query(机器应用模型).filter(机器应用模型.启用 == True).all()
+        logger.debug(f"[触发影刀] 数据库中所有启用的应用: {[(b.应用名, repr(b.应用名), len(b.应用名)) for b in 所有绑定]}")
+
+        # 标准化应用名称（去除首尾空格）
+        app_name_normalized = app_name.strip()
+        logger.debug(f"[触发影刀] 标准化后的 app_name={repr(app_name_normalized)}")
+
+        # 先精确匹配
         绑定 = db.query(机器应用模型).filter(
-            机器应用模型.应用名 == app_name,
+            机器应用模型.应用名 == app_name_normalized,
             机器应用模型.启用 == True
         ).first()
 
+        # 精确匹配失败，尝试模糊匹配
         if not 绑定:
-            return f"错误：未找到应用 '{app_name}' 的机器绑定"
+            logger.debug(f"[触发影刀] 精确匹配失败，尝试模糊匹配")
+            for b in 所有绑定:
+                db_name = b.应用名.strip()
+                logger.debug(f"[触发影刀] 比较: '{app_name_normalized}' vs '{db_name}'")
+                if db_name in app_name_normalized or app_name_normalized in db_name:
+                    logger.debug(f"[触发影刀] 模糊匹配成功: {db_name}")
+                    绑定 = b
+                    break
+
+        # 还是找不到，列出所有可用应用
+        if not 绑定:
+            可用应用 = [b.应用名 for b in 所有绑定]
+            logger.warning(f"[触发影刀] 未找到应用 '{app_name_normalized}'，可用应用: {可用应用}")
+            return f"错误：未找到应用 '{app_name_normalized}'。当前可用应用：{', '.join(可用应用)}"
+
+        logger.info(f"[触发影刀] 匹配成功，应用: {绑定.应用名}, 机器: {绑定.机器码}")
 
         machine_id = 绑定.机器码
 
@@ -83,29 +117,41 @@ async def 触发影刀(app_name: str) -> str:
                 return 结果
 
             # 更新机器状态为 running（busy）
-            机器.状态 = "running"
-            机器.更新时间 = datetime.now()
-            db.commit()
+            try:
+                机器.状态 = "running"
+                机器.更新时间 = datetime.now()
+                db.commit()
+                logger.info(f"[触发影刀] 机器状态已更新: {machine_id} -> running")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[触发影刀] 更新机器状态失败: {e}", exc_info=True)
+                return f"警告：邮件已发送，但机器状态更新失败 - {str(e)}"
 
             return f"已触发执行：应用 '{app_name}' 已发送到机器 '{机器.机器名称}'"
 
         elif 实际状态 == "busy":
             # 机器忙碌，加入任务队列
-            新任务 = 任务队列模型(
-                应用名=app_name,
-                机器码=machine_id,
-                状态="waiting"
-            )
-            db.add(新任务)
-            db.commit()
+            try:
+                新任务 = 任务队列模型(
+                    应用名=app_name,
+                    机器码=machine_id,
+                    状态="waiting"
+                )
+                db.add(新任务)
+                db.commit()
 
-            # 查询队列位置
-            队列位置 = db.query(任务队列模型).filter(
-                任务队列模型.机器码 == machine_id,
-                任务队列模型.状态 == "waiting"
-            ).count()
+                # 查询队列位置
+                队列位置 = db.query(任务队列模型).filter(
+                    任务队列模型.机器码 == machine_id,
+                    任务队列模型.状态 == "waiting"
+                ).count()
 
-            return f"机器 '{机器.机器名称}' 正在忙碌，任务已加入队列等待（队列位置：第{队列位置}个）"
+                logger.info(f"[触发影刀] 任务已加入队列: {app_name}, 机器: {machine_id}, 位置: {队列位置}")
+                return f"机器 '{机器.机器名称}' 正在忙碌，任务已加入队列等待（队列位置：第{队列位置}个）"
+            except Exception as e:
+                db.rollback()
+                logger.error(f"[触发影刀] 加入任务队列失败: {e}", exc_info=True)
+                return f"错误：加入任务队列失败 - {str(e)}"
 
         else:  # offline
             return f"错误：机器 '{机器.机器名称}' 当前离线，无法执行"
@@ -171,6 +217,18 @@ async def _发送触发邮件(收件人: str, 主题: str, 正文: str) -> str:
         logger.info(f"影刀触发邮件发送成功: {收件人} - {主题}")
         return "邮件发送成功"
 
+    except smtplib.SMTPAuthenticationError:
+        error_msg = "SMTP 认证失败，请检查用户名和密码"
+        logger.error(error_msg)
+        return f"错误：{error_msg}"
+    except smtplib.SMTPException as e:
+        error_msg = f"SMTP 错误: {str(e)}"
+        logger.error(error_msg)
+        return f"错误：{error_msg}"
+    except (socket.timeout, TimeoutError):
+        error_msg = "SMTP 连接超时，请检查网络或服务器地址"
+        logger.error(error_msg)
+        return f"错误：{error_msg}"
     except Exception as e:
         error_msg = f"发送触发邮件失败: {str(e)}"
         logger.error(error_msg, exc_info=True)
