@@ -1,0 +1,40 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+
+# 日志和临时文件
+*.log
+*.tmp
+*.backup
+*.bak
+recent_logs.txt
+token.txt
+nul
+
+# 环境变量（敏感信息）
+.env
+.env.local
+
+# IDE
+.vscode/
+.claude/
+
+# 调试产物
+openapi*.json
+metadata.json
+debug_messages.txt
+
+# 数据库（服务器有自己的）
+*.db
+*.sqlite3
+
+# 系统文件
+.DS_Store
+Thumbs.db

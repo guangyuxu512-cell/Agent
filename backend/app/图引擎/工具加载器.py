@@ -8,8 +8,7 @@ import subprocess
 import sys
 import tempfile
 import shutil
-import ctypes
-from ctypes import wintypes
+import platform
 from typing import Optional
 import httpx
 from langchain_core.tools import StructuredTool
@@ -25,13 +24,23 @@ _PYTHON_EXEC_TIMEOUT = PYTHON_TOOL_EXEC_TIMEOUT
 # 沙箱执行器脚本路径
 _沙箱执行器路径 = os.path.join(os.path.dirname(__file__), "_沙箱执行器.py")
 
-# ========== L6: Windows Job Object 资源限制 ==========
+# ========== L6: 平台相关资源限制 ==========
 
 _IS_WINDOWS = sys.platform == "win32"
+_IS_LINUX = sys.platform.startswith("linux")
+
+# Windows Job Object 仅在 Windows 下导入
+if _IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
 
 
 def _创建受限Job():
-    """创建带资源限制的 Windows Job Object"""
+    """创建带资源限制的 Windows Job Object (Windows-only)
+
+    Linux 下此函数返回 None，资源限制通过 preexec_fn 设置 rlimit。
+    容器部署时，OS 级限制由 docker-compose.yml 的 mem_limit/pids_limit 提供。
+    """
     if not _IS_WINDOWS:
         return None
 
@@ -97,9 +106,38 @@ def _创建受限Job():
 
 
 def _关闭Job(job_handle):
-    """关闭 Job Object"""
+    """关闭 Job Object (Windows-only)"""
     if job_handle and _IS_WINDOWS:
         ctypes.windll.kernel32.CloseHandle(job_handle)
+
+
+def _linux_preexec():
+    """Linux 下通过 resource.setrlimit 设置资源限制
+
+    等价于 Windows Job Object 的限制：
+    - RLIMIT_AS: 128MB 内存限制
+    - RLIMIT_NPROC: 禁止创建子进程
+    - RLIMIT_CPU: 10秒 CPU 时间限制
+
+    注意：容器部署时，这些是语言层限制，OS 级限制由 docker-compose 提供。
+    """
+    if not _IS_LINUX:
+        return
+
+    try:
+        import resource
+        # 内存限制 128MB (等价于 Windows Job Object ProcessMemoryLimit)
+        mem_limit = 128 * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (mem_limit, mem_limit))
+
+        # 禁止创建子进程 (等价于 Windows Job Object ActiveProcessLimit=1)
+        resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+
+        # CPU 时间限制 10秒
+        resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
+    except Exception as e:
+        # 容器环境可能已有限制，不阻断执行
+        logger.debug("Linux rlimit 设置失败（容器环境可能已限制）: %s", e)
 
 
 def 解析参数模型(工具名称: str, 参数定义: dict) -> type:
@@ -210,6 +248,7 @@ def 执行Python工具(配置: dict, 参数: dict) -> str:
                     最小环境[key] = os.environ[key]
 
         # L3/L7: 子进程执行
+        # Linux 下通过 preexec_fn 设置 rlimit，Windows 下使用 Job Object
         proc = subprocess.Popen(
             [sys.executable, _沙箱执行器路径],
             stdin=subprocess.PIPE,
@@ -218,6 +257,7 @@ def 执行Python工具(配置: dict, 参数: dict) -> str:
             cwd=临时目录,
             env=最小环境,
             creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
+            preexec_fn=_linux_preexec if _IS_LINUX else None,
         )
 
         # L6: Windows Job Object 资源限制
@@ -279,6 +319,9 @@ def 执行Python工具(配置: dict, 参数: dict) -> str:
 
 def 加载工具列表(工具记录列表: list) -> list:
     """从数据库记录转换为 LangChain StructuredTool 列表"""
+    from app.图引擎.内置工具 import BUILTIN_TOOLS
+
+    logger.info(f"[工具加载] 开始加载工具，共 {len(工具记录列表)} 个工具记录")
     工具列表 = []
 
     for 记录 in 工具记录列表:
@@ -288,6 +331,8 @@ def 加载工具列表(工具记录列表: list) -> list:
             工具类型 = 记录.get("tool_type", "http_api")
             工具名称 = 记录.get("name", "unnamed_tool")
             工具描述 = 记录.get("description", "一个工具")
+
+            logger.info(f"[工具加载] 加载工具: {工具名称}, 类型: {工具类型}")
 
             参数模型 = 解析参数模型(工具名称, 参数定义)
 
@@ -309,12 +354,50 @@ def 加载工具列表(工具记录列表: list) -> list:
                     description=工具描述,
                     args_schema=参数模型,
                 )
+            elif 工具类型 == "builtin":
+                # 内置工具
+                builtin_name = 配置.get("builtin_name", "")
+                if not builtin_name:
+                    logger.warning("内置工具 %s 缺少 builtin_name 配置", 工具名称)
+                    continue
+
+                logger.info(f"[工具加载] 内置工具 {工具名称}, builtin_name: {builtin_name}")
+                builtin_func = BUILTIN_TOOLS.get(builtin_name)
+                if not builtin_func:
+                    logger.warning("未知的内置工具: %s", builtin_name)
+                    continue
+
+                logger.info(f"[工具加载] 成功找到内置工具函数: {builtin_name}")
+                # ⭐ 修复1：使用英文 builtin_name 作为工具名称（Gemini 等 API 要求英文名）
+                # ⭐ 修复2：创建同步包装器，避免 "does not support sync invocation" 错误
+                import asyncio
+                def _sync_wrapper(**kwargs):
+                    """同步包装器：在新事件循环中运行 async 函数"""
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            # 如果已有运行中的循环，创建新循环
+                            import nest_asyncio
+                            nest_asyncio.apply()
+                    except RuntimeError:
+                        pass
+                    return asyncio.run(builtin_func(**kwargs))
+
+                工具 = StructuredTool.from_function(
+                    func=_sync_wrapper,  # 同步包装器
+                    coroutine=builtin_func,  # 异步函数
+                    name=builtin_name,  # 使用英文名：send_email, feishu_assistant
+                    description=f"{工具名称}：{工具描述}",  # 中文名+描述，帮助 LLM 理解
+                    args_schema=参数模型,
+                )
             else:
                 continue
 
             工具列表.append(工具)
+            logger.info(f"[工具加载] 工具 {工具名称} 加载成功")
         except Exception as e:
             logger.warning("加载工具失败 %s: %s", 记录.get('name', '?'), e)
             continue
 
+    logger.info(f"[工具加载] 完成，共加载 {len(工具列表)} 个工具: {[t.name for t in 工具列表]}")
     return 工具列表

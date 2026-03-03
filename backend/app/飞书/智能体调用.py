@@ -15,19 +15,24 @@ from app.飞书.配置与会话 import (
 logger = logging.getLogger(__name__)
 
 
-async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -> str:
+async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -> tuple[str, bool]:
     """
-    调用 LangGraph 智能体处理消息，返回完整回复文本。
+    调用 LangGraph 智能体处理消息，返回完整回复文本和是否调用了飞书工具。
 
     修复要点：
     1. 用户消息只保存一次（在重试循环外）
     2. 403/500/429 指数退避重试
     3. 诊断日志：失败时打印 base_url + api_key 长度
     4. DashScope 特定错误识别
+    5. ⭐ 新增：检测是否调用了飞书助手工具发送消息，避免重复发送
+
+    Returns:
+        tuple[str, bool]: (回复文本, 是否调用了飞书发送消息工具)
     """
     最大重试 = FEISHU_MAX_RETRY
     db = 会话工厂()
     try:
+        logger.info(f"[飞书调试] 收到消息，准备调用Agent，消息内容: {用户消息}")
         # 1. 保存用户消息（仅一次）
         保存消息(db, 对话id, "user", 用户消息)
 
@@ -45,10 +50,13 @@ async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -
         # 4. 构建 Agent 图（含工具）
         工具记录列表 = 获取Agent工具记录(db, agent配置)
         图 = 构建Agent图(agent配置, 工具记录列表=工具记录列表)
+        logger.info(f"[飞书调试] 工具列表: {[工具.get('name', str(工具)) for 工具 in 工具记录列表]}, 数量: {len(工具记录列表)}")
 
         # 5. 重试循环
         最后异常 = None
         完整回复 = ""
+        调用了飞书发送消息 = False  # ⭐ 新增：标记是否调用了飞书发送消息工具
+
         for 第几次 in range(最大重试 + 1):
             try:
                 完整回复 = ""
@@ -57,10 +65,33 @@ async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -
                     version="v2",
                 ):
                     事件类型 = event.get("event", "")
+                    logger.info(f"[飞书调试] 事件类型: {事件类型}")
+
+                    # 处理 LLM 文本输出
                     if 事件类型 == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
                         if chunk and hasattr(chunk, "content") and chunk.content:
                             完整回复 += chunk.content
+
+                    # ⭐ 新增：处理工具调用开始事件
+                    elif 事件类型 == "on_tool_start":
+                        工具名 = event.get("name", "")
+                        工具参数 = event.get("data", {}).get("input", {})
+                        logger.info(f"[飞书] Agent调用工具: {工具名}, 参数: {工具参数}")
+
+                        # ⭐ 检测是否调用了飞书助手的发消息功能
+                        if 工具名 == "飞书助手":
+                            操作类型 = 工具参数.get("操作类型", "")
+                            if 操作类型 == "发消息":
+                                调用了飞书发送消息 = True
+                                logger.info(f"[飞书] 检测到Agent调用飞书助手发送消息，将跳过自动回复")
+
+                    # ⭐ 新增：处理工具调用结果事件
+                    elif 事件类型 == "on_tool_end":
+                        工具名 = event.get("name", "")
+                        工具结果 = str(event.get("data", {}).get("output", ""))[:500]
+                        logger.info(f"[飞书] 工具执行完成: {工具名}, 结果: {工具结果}")
+
                 break
 
             except Exception as e:
@@ -97,7 +128,7 @@ async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -
             except Exception as e:
                 logger.warning("[飞书长连接] 触发记忆提取失败（不影响回复）: %s", e)
 
-        return 完整回复 or "（智能体未返回内容）"
+        return (完整回复 or "（智能体未返回内容）", 调用了飞书发送消息)
 
     except Exception as e:
         错误信息 = str(e).lower()
@@ -127,11 +158,18 @@ async def 调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -
         db.close()
 
 
-def 同步调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -> str:
-    """用共享 event loop 执行异步智能体调用。"""
+def 同步调用智能体(agent配置: dict, 用户消息: str, 对话id: str) -> tuple[str, bool]:
+    """用共享 event loop 执行异步智能体调用。
+
+    Returns:
+        tuple[str, bool]: (回复文本, 是否调用了飞书发送消息工具)
+    """
+    logger.info(f"[飞书调试-同步] 进入同步调用智能体，消息: {用户消息[:50]}")
     loop = 获取飞书loop()
     future = asyncio.run_coroutine_threadsafe(
         调用智能体(agent配置, 用户消息, 对话id),
         loop
     )
-    return future.result(timeout=FEISHU_AGENT_TIMEOUT)
+    回复, 调用了飞书工具 = future.result(timeout=FEISHU_AGENT_TIMEOUT)
+    logger.info(f"[飞书调试-同步] 同步调用完成，回复长度: {len(回复)}, 调用了飞书工具: {调用了飞书工具}")
+    return 回复, 调用了飞书工具

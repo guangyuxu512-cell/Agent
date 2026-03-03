@@ -90,24 +90,34 @@ def 更新对话时间(db: Session, 对话id: str):
 # ==================== ⭐ Step 4 新增：获取 Agent 绑定的工具记录 ====================
 
 def 获取Agent工具记录(db: Session, agent配置: dict) -> list:
-    """根据 Agent 的 tools 字段（JSON 数组），从 DB 查询激活状态的工具详情"""
-    工具ID原始 = agent配置.get("tools", [])
+    """根据 Agent 的 tools 字段（JSON 数组），从 DB 查询激活状态的工具详情
 
-    if isinstance(工具ID原始, str):
+    ⭐ 修复：支持按工具名称或工具ID查询（兼容历史数据）
+    """
+    工具标识原始 = agent配置.get("tools", [])
+    logger.info(f"[对话] Agent工具标识原始: {工具标识原始}")
+
+    if isinstance(工具标识原始, str):
         try:
-            工具ID列表 = json.loads(工具ID原始)
+            工具标识列表 = json.loads(工具标识原始)
         except (json.JSONDecodeError, TypeError):
-            工具ID列表 = []
+            工具标识列表 = []
     else:
-        工具ID列表 = 工具ID原始 or []
+        工具标识列表 = 工具标识原始 or []
 
-    if not 工具ID列表:
+    logger.info(f"[对话] Agent工具标识列表: {工具标识列表}")
+
+    if not 工具标识列表:
+        logger.warning(f"[对话] Agent工具列表为空")
         return []
 
+    # ⭐ 修复：同时支持按名称和按ID查询（兼容历史数据）
     工具记录 = db.query(工具模型).filter(
-        工具模型.id.in_(工具ID列表),
+        (工具模型.名称.in_(工具标识列表)) | (工具模型.id.in_(工具标识列表)),
         工具模型.状态 == "active"
     ).all()
+
+    logger.info(f"[对话] 查询到 {len(工具记录)} 个工具记录: {[t.名称 for t in 工具记录]}")
 
     return [
         {
@@ -136,46 +146,53 @@ async def SSE生成器(agent配置: dict, 消息列表: list, 对话id: str):
     - done: 完整回复内容
     - error: 错误信息
     """
-    # 返回 conversation_id
-    yield f"data: {json.dumps({'type': 'conversation_id', 'content': 对话id}, ensure_ascii=False)}\n\n"
-
-    # 返回 agent 名称
-    yield f"data: {json.dumps({'type': 'agent', 'name': agent配置.get('name', '助手')}, ensure_ascii=False)}\n\n"
-
     完整回复 = ""
     db = 会话工厂()
 
     try:
+        # 返回 conversation_id
+        yield f"data: {json.dumps({'type': 'conversation_id', 'content': 对话id}, ensure_ascii=False)}\n\n"
+
+        # 返回 agent 名称
+        yield f"data: {json.dumps({'type': 'agent', 'name': agent配置.get('name', '助手')}, ensure_ascii=False)}\n\n"
         # 加载工具记录，传给构建Agent图
         工具记录列表 = 获取Agent工具记录(db, agent配置)
+
         图 = 构建Agent图(agent配置, 工具记录列表=工具记录列表)
 
-        # 流式执行
-        async for event in 图.astream_events(
-            {"messages": 消息列表},
-            version="v2",
-        ):
-            事件类型 = event.get("event", "")
+        # 流式执行 - 添加详细异常捕获
+        try:
+            async for event in 图.astream_events(
+                {"messages": 消息列表},
+                version="v2",
+            ):
+                事件类型 = event.get("event", "")
 
-            # 捕获 LLM 逐 token 输出
-            if 事件类型 == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
-                if chunk and hasattr(chunk, "content") and chunk.content:
-                    token = chunk.content
-                    完整回复 += token
-                    yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
+                # 捕获 LLM 逐 token 输出
+                if 事件类型 == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        token = chunk.content
+                        完整回复 += token
+                        yield f"data: {json.dumps({'type': 'token', 'content': token}, ensure_ascii=False)}\n\n"
 
-            # 工具调用开始事件
-            elif 事件类型 == "on_tool_start":
-                工具名 = event.get("name", "")
-                工具参数 = event.get("data", {}).get("input", {})
-                yield f"data: {json.dumps({'type': 'tool_call', 'name': 工具名, 'args': 工具参数}, ensure_ascii=False)}\n\n"
+                # 工具调用开始事件
+                elif 事件类型 == "on_tool_start":
+                    工具名 = event.get("name", "")
+                    工具参数 = event.get("data", {}).get("input", {})
+                    yield f"data: {json.dumps({'type': 'tool_call', 'name': 工具名, 'args': 工具参数}, ensure_ascii=False)}\n\n"
 
-            # 工具调用结果事件
-            elif 事件类型 == "on_tool_end":
-                工具名 = event.get("name", "")
-                工具结果 = str(event.get("data", {}).get("output", ""))[:TOOL_RESULT_MAX_LEN]
-                yield f"data: {json.dumps({'type': 'tool_result', 'name': 工具名, 'result': 工具结果}, ensure_ascii=False)}\n\n"
+                # 工具调用结果事件
+                elif 事件类型 == "on_tool_end":
+                    工具名 = event.get("name", "")
+                    工具结果 = str(event.get("data", {}).get("output", ""))[:TOOL_RESULT_MAX_LEN]
+                    yield f"data: {json.dumps({'type': 'tool_result', 'name': 工具名, 'result': 工具结果}, ensure_ascii=False)}\n\n"
+        except Exception as stream_error:
+            import traceback
+            错误堆栈 = traceback.format_exc()
+            logger.error(f"[SSE] astream_events 异常:\n{错误堆栈}")
+            yield f"data: {json.dumps({'type': 'error', 'content': f'流式执行错误: {str(stream_error)}'}, ensure_ascii=False)}\n\n"
+            raise  # 重新抛出以便外层捕获
 
         # 流式完成
         yield f"data: {json.dumps({'type': 'done', 'content': 完整回复}, ensure_ascii=False)}\n\n"
@@ -193,12 +210,19 @@ async def SSE生成器(agent配置: dict, 消息列表: list, 对话id: str):
                 logger.warning("[记忆] 触发记忆提取失败（不影响对话）: %s", e)
 
     except Exception as e:
+        import traceback
+        错误堆栈 = traceback.format_exc()
+        logger.error(f"[SSE] SSE生成器异常（完整堆栈）:\n{错误堆栈}")
+
         错误信息 = str(e)
         # 友好化常见错误
         if "API key" in 错误信息.lower() or "api_key" in 错误信息.lower():
             错误信息 = "LLM API Key 无效或未配置。请检查 Agent 设置或 .env 文件中的 OPENAI_API_KEY"
         elif "connection" in 错误信息.lower() or "timeout" in 错误信息.lower():
             错误信息 = f"LLM 服务连接失败，请检查网络或 API 地址配置。原始错误：{str(e)}"
+        else:
+            # 对于其他错误，包含完整堆栈信息
+            错误信息 = f"{错误信息}\n\n完整堆栈已记录到后端日志"
 
         yield f"data: {json.dumps({'type': 'error', 'content': 错误信息}, ensure_ascii=False)}\n\n"
 

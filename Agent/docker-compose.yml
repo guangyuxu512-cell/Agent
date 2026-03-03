@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  frontend:
+    build: .
+    ports:
+      - "1254:80"
+    restart: unless-stopped
+    container_name: agent-frontend
+
+  # 后端写好后取消注释
+  # backend:
+  #   build: ./backend
+  #   ports:
+  #     - "8000:8000"
+  #   restart: unless-stopped
+  #   container_name: agent-backend
+  #   environment:
+  #     - DATABASE_URL=sqlite:///data/app.db
+  #   volumes:
+  #     - backend-data:/app/data
+
+# volumes:
+#   backend-data:

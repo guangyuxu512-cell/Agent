@@ -9,7 +9,10 @@ from app.配置 import 密钥, 令牌算法
 # 不需要鉴权的路径
 免鉴权路径 = [
     "/api/auth/login",
+    # "/api/auth/change-password",  # ⭐ 修复：修改密码需要鉴权，移除免鉴权
     "/api/health",
+    "/api/logs/push",  # 影刀推流（自行验证 X-RPA-KEY）
+    "/api/logs/stream",  # SSE 端点自行验证 query token（EventSource 无法发 header）
     "/docs",
     "/openapi.json",
     "/redoc",

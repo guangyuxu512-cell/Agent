@@ -1,0 +1,39 @@
+version: "3.8"
+services:
+  backend:
+    build: .
+    container_name: agent-backend
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data        # SQLite 数据持久化
+      - ./.env:/app/.env        # 环境变量
+    restart: unless-stopped
+
+    # ========== 资源限制（P0 安全：防止工具执行耗尽宿主机资源） ==========
+    # 这些限制作用于整个容器，包括主进程和所有工具执行子进程
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'              # CPU 限制：最多使用 2 核
+          memory: 1G               # 内存限制：1GB（主进程 + 所有工具子进程）
+        reservations:
+          cpus: '0.5'              # CPU 预留：至少 0.5 核
+          memory: 256M             # 内存预留：256MB
+
+    # 进程数限制（防止 fork 炸弹）
+    pids_limit: 100                # 最多 100 个进程（主进程 + uvicorn workers + 工具子进程）
+
+    # 说明：
+    # - 语言层限制（Python 沙箱）：
+    #   - Windows: Job Object (128MB/进程, 禁止子进程)
+    #   - Linux: resource.setrlimit (128MB/进程, 禁止子进程)
+    # - OS 层限制（容器）：
+    #   - mem_limit: 1GB 总内存（所有进程共享）
+    #   - pids_limit: 100 个进程上限
+    #   - cpus: 2.0 核 CPU 上限
+    #
+    # 验收测试：
+    #   docker stats agent-backend  # 实时监控资源使用
+    #   docker exec agent-backend cat /sys/fs/cgroup/memory/memory.limit_in_bytes  # 查看内存限制
+    #   docker exec agent-backend cat /sys/fs/cgroup/pids/pids.max  # 查看进程数限制

@@ -8,6 +8,11 @@ P0-1 沙箱安全回归测试 — 11 项用例 + 1 正向验证
   python tests/security/test_sandbox.py                       # 直接运行
 
 每次修改沙箱相关代码（工具加载器.py / _沙箱执行器.py）后必须跑一遍。
+
+Docker 部署说明:
+  - 测试 7 (内存耗尽) 在 Windows 下使用 Job Object，Linux 下使用 rlimit
+  - 容器部署时，OS 级资源限制由 docker-compose.yml 提供 (mem_limit/pids_limit)
+  - pytest 在 Linux 下会跳过 Windows-only 用例
 """
 
 import sys
@@ -15,6 +20,7 @@ import os
 import json
 import subprocess
 import textwrap
+import pytest
 
 # 定位 backend 目录
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -117,11 +123,15 @@ from app.图引擎.工具加载器 import 执行Python工具  # noqa: E402
     # ----------------------------------------------------------------
     {
         "编号": 7,
-        "名称": "分配 >128MB 内存 — L6 Job Object 终止进程",
+        "名称": "分配 >128MB 内存 — L6 资源限制终止进程",
         "code": "def execute(params):\n    x = []\n    for i in range(10**9): x.append('A'*10**6)\n    return 'done'",
         "期望关键词": ["错误", "终止"],
         "应成功": False,
-        "说明": "Windows Job Object ProcessMemoryLimit=128MB 杀死超限进程。",
+        "说明": (
+            "Windows: Job Object ProcessMemoryLimit=128MB 杀死超限进程。\n"
+            "Linux: resource.setrlimit(RLIMIT_AS, 128MB) 限制虚拟内存。\n"
+            "容器部署: docker-compose.yml 的 mem_limit 提供 OS 级限制。"
+        ),
     },
     # ----------------------------------------------------------------
     # 8. import subprocess（函数内部）— 同测试 1，L2 builtins 阻断
@@ -476,6 +486,12 @@ def test_06_chr_concat_harmless():
     assert r == "socket", f"预期 'socket', 得到: {r}"
 
 def test_07_memory_exhaustion():
+    """内存耗尽测试 - Windows Job Object / Linux rlimit
+
+    Windows: Job Object ProcessMemoryLimit=128MB
+    Linux: resource.setrlimit(RLIMIT_AS, 128MB)
+    容器: docker-compose.yml mem_limit 提供 OS 级限制
+    """
     r = 执行Python工具({"code": 测试用例[6]["code"]}, {})
     assert "错误" in r or "终止" in r, f"未终止: {r}"
 
