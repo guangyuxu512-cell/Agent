@@ -38,3 +38,7 @@ debug_messages.txt
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# 在 .gitignore 里追加
+test_*.py
+register_tool.py
