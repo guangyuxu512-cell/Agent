@@ -116,17 +116,7 @@ async def 触发影刀(app_name: str) -> str:
             if 结果.startswith("错误"):
                 return 结果
 
-            # 更新机器状态为 running（busy）
-            try:
-                机器.状态 = "running"
-                机器.更新时间 = datetime.now()
-                db.commit()
-                logger.info(f"[触发影刀] 机器状态已更新: {machine_id} -> running")
-            except Exception as e:
-                db.rollback()
-                logger.error(f"[触发影刀] 更新机器状态失败: {e}", exc_info=True)
-                return f"警告：邮件已发送，但机器状态更新失败 - {str(e)}"
-
+            # 机器状态由影刀应用通过 HTTP 回调自行更新
             return f"已触发执行：应用 '{app_name}' 已发送到机器 '{机器.机器名称}'"
 
         elif 实际状态 == "busy":
