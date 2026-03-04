@@ -512,8 +512,8 @@ export default function ShadowbotLogs() {
           headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
         const json = await res.json();
-        if (json.code === 0 && json.data?.length) {
-          for (const entry of json.data) {
+        if (json.code === 0 && json.data?.logs?.length) {
+          for (const entry of json.data.logs) {
             handleNewLog(entry);
           }
         }
