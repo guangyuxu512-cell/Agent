@@ -4,7 +4,7 @@
 
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -239,6 +239,7 @@ async def 机器心跳(请求体: 心跳请求, 数据库: Session = Depends(获
 async def 更新机器状态(
     machine_id: str,
     请求体: 状态更新请求,
+    request: Request,
     数据库: Session = Depends(获取数据库),
     x_rpa_key: Optional[str] = Header(None, alias="X-RPA-KEY")
 ):
@@ -253,6 +254,9 @@ async def 更新机器状态(
     返回：
         {"code": 0, "data": null, "msg": "状态更新成功"}
     """
+    # 详细日志：记录调用来源
+    logger.info(f"[状态更新请求] machine_id={machine_id}, status={请求体.status}, client_ip={request.client.host if request.client else 'unknown'}")
+
     # X-RPA-KEY 鉴权
     if not x_rpa_key:
         logger.warning("更新机器状态失败：缺少 X-RPA-KEY 请求头")
@@ -332,15 +336,9 @@ async def _处理任务队列(machine_id: str, 数据库: Session):
             数据库.commit()
             return
 
-        # 发送成功，更新任务状态和机器状态
+        # 发送成功，更新任务状态（机器状态由影刀回调更新）
         等待任务.状态 = "triggered"
         等待任务.触发时间 = datetime.now()
-
-        机器 = 数据库.query(机器模型).filter(机器模型.机器码 == machine_id).first()
-        if 机器:
-            机器.状态 = "running"
-            机器.更新时间 = datetime.now()
-
         数据库.commit()
         logger.info(f"[任务队列] 自动触发等待任务: {等待任务.应用名} (机器: {machine_id})")
 

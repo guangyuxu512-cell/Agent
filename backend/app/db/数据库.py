@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 引擎 = create_engine(
     数据库地址,
     connect_args={"check_same_thread": False},  # SQLite 需要
-    echo=False
+    echo=True  # 启用 SQL 查询日志，用于调试
 )
 
 会话工厂 = sessionmaker(autocommit=False, autoflush=False, bind=引擎)

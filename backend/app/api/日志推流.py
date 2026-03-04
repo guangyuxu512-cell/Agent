@@ -172,7 +172,7 @@ async def push_log(
         # 广播到所有 SSE 客户端
         await _广播日志(日志字典)
 
-        # ========== 更新机器状态 ==========
+        # ========== 更新机器心跳 ==========
         machine_id = 请求体.machine
         level = 请求体.level or "进行中"
 
@@ -182,22 +182,14 @@ async def push_log(
                 机器 = db.query(机器模型).filter(机器模型.机器码 == machine_id).first()
 
                 if 机器:
-                    # 根据日志级别更新机器状态
-                    if "进行中" in level or "执行中" in level:
-                        机器.状态 = "running"
-                    elif "完成" in level or "成功" in level:
-                        机器.状态 = "idle"
-                    elif "失败" in level or "异常" in level:
-                        机器.状态 = "error"
-
-                    # 更新最后心跳时间
+                    # 只更新心跳时间，状态由 HTTP 回调接口控制
                     机器.最后心跳 = datetime.now()
                     机器.更新时间 = datetime.now()
                     db.commit()
 
-                    logger.debug(f"更新机器状态: {machine_id} -> {机器.状态}")
+                    logger.debug(f"更新机器心跳: {machine_id}")
             except Exception as e:
-                logger.warning(f"更新机器状态失败: {e}")
+                logger.warning(f"更新机器心跳失败: {e}")
                 # 不影响日志推送，继续执行
 
         return 统一响应(data={"seq": 新日志.id})
