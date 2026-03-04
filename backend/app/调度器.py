@@ -32,6 +32,20 @@ async def 启动调度器():
     调度器实例.start()
     logger.info("[调度器] APScheduler 已启动")
 
+    # 注册日志清理任务（每天凌晨 3 点执行）
+    from app.api.日志推流 import 清理过期日志
+    调度器实例.add_job(
+        清理过期日志,
+        trigger="cron",
+        hour=3,
+        minute=0,
+        id="log_cleanup",
+        name="清理过期日志",
+        replace_existing=True,
+        misfire_grace_time=3600
+    )
+    logger.info("[调度器] 已注册日志清理任务（每天 03:00）")
+
     # 从数据库加载所有 enabled 的任务
     db = 会话工厂()
     try:

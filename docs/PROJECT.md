@@ -69,11 +69,10 @@ Agent 平台是一个多智能体管理与编排系统，支持通过 Web 界面
 | **工具** | Python 沙箱执行（RestrictedPython 7 层纵深防御，子进程隔离 + 平台资源限制） | `app/图引擎/工具加载器.py:163` `执行Python工具()` + `app/图引擎/_沙箱执行器.py` |
 | **工具** | 平台资源限制（Windows: Job Object / Linux: rlimit / 容器: docker-compose） | `app/图引擎/工具加载器.py:33` `_创建受限Job()` / `_linux_preexec()` + `backend/docker-compose.yml` |
 | **工具** | 工具 CRUD + 在线测试 | `app/api/工具.py:154-315` 6 个路由函数 |
-| **日志** | SSE 实时推流（sse-token 鉴权，断线续传，心跳） | `app/api/日志.py:99` `log_stream()` |
-| **日志** | 短期 SSE 令牌签发（scope=sse，3 分钟有效） | `app/api/日志.py:82` `get_sse_token()` |
-| **日志** | 推送接口（外部设备上报日志） | `app/api/日志.py:56` `push_log()` |
-| **日志** | 历史查询（按 task_id 过滤、增量 since_seq） | `app/api/日志.py:166` `log_history()` |
-| **日志** | 过期日志自动清理（默认 30 天） | `app/api/日志.py:185` `清理过期日志()` |
+| **日志推流** | SSE 实时推流（sse-token 鉴权，心跳） | `app/api/日志推流.py:229` `log_stream()` |
+| **日志推流** | 短期 SSE 令牌签发（scope=sse，5 分钟有效） | `app/api/日志推流.py:102` `get_sse_token()` |
+| **日志推流** | 推送接口（X-RPA-KEY 鉴权，外部设备上报日志） | `app/api/日志推流.py:122` `push_log()` |
+| **日志推流** | 历史查询（按 task_id 过滤、增量 since_seq） | `app/api/日志推流.py:321` `log_history()` |
 | **定时任务** | Cron / Interval / Once 调度（APScheduler） | `app/调度器.py:29` `启动调度器()` / `app/调度器.py:150` `执行定时任务()` |
 | **定时任务** | 定时任务 CRUD + 执行记录 | `app/api/定时任务.py:120-277` 4 个路由函数 |
 | **编排** | 多 Agent 编排配置（全局单例，Supervisor 模式） | `app/api/编排.py:27-60` 2 个路由函数 |
@@ -206,17 +205,25 @@ Agent 平台是一个多智能体管理与编排系统，支持通过 Web 界面
 
 **工具类型：** `http_api`（HTTP 请求）、`python_code`（Python 沙箱执行）。
 
-### 日志 — `app/api/日志.py`（无 prefix）
+### 日志推流 — `app/api/日志推流.py`（prefix=`/api/logs`）
 
 | Method | Path | 鉴权 | 函数 | 行号 |
 |--------|------|------|------|------|
-| POST | `/api/logs/push` | Bearer | `push_log()` | 56 |
-| GET | `/api/logs/sse-token` | Bearer | `get_sse_token()` | 82 |
-| GET | `/api/logs/stream` | Query Token（sse-token） | `log_stream()` | 99 |
-| GET | `/api/logs/history` | Bearer | `log_history()` | 166 |
+| POST | `/api/logs/push` | X-RPA-KEY Header | `push_log()` | 122 |
+| GET | `/api/logs/sse-token` | Bearer | `get_sse_token()` | 102 |
+| GET | `/api/logs/stream` | Query Token（sse-token） | `log_stream()` | 229 |
+| GET | `/api/logs/history` | Bearer | `log_history()` | 321 |
 
 **POST /api/logs/push 请求：**
 
+此接口使用 X-RPA-KEY 鉴权（环境变量 `RPA_PUSH_KEY`），用于影刀等外部设备推送日志。
+
+请求头：
+```
+X-RPA-KEY: <RPA_PUSH_KEY>
+```
+
+请求体：
 ```json
 {
   "task_id": "task_001",
@@ -230,10 +237,10 @@ Agent 平台是一个多智能体管理与编排系统，支持通过 Web 界面
 **GET /api/logs/sse-token 响应：**
 
 ```json
-{"code": 0, "data": {"token": "eyJ...", "expires_in": 180}}
+{"code": 0, "data": {"token": "eyJ...", "expires_in": 300}}
 ```
 
-**GET /api/logs/history 参数：** `task_id`（可选）、`since_seq`（增量，默认 0）、`page_size`（默认 200，最大 1000）。
+**GET /api/logs/history 参数：** `task_id`（可选）、`since_seq`（增量，默认 0）、`limit`（默认 50，最大 1000）。
 
 ### 定时任务 — `app/api/定时任务.py`（prefix=`/api/schedules`）
 
@@ -394,34 +401,36 @@ X-Accel-Buffering: no
 
 ### 4.2 日志流 — `GET /api/logs/stream`
 
-> 代码位置：`app/api/日志.py:99` `log_stream()`
+> 代码位置：`app/api/日志推流.py:229` `log_stream()`
 
 **鉴权方式：** Query Token（短期 SSE 令牌，非 Bearer header）。
 
 EventSource API 无法发送自定义 header，因此日志流采用专用的短期令牌方案：
 
 ```
-1. 前端用 Bearer token 调用 GET /api/logs/sse-token（日志.py:82）
-   → 获得 3 分钟有效的 JWT（scope=sse）
+1. 前端用 Bearer token 调用 GET /api/logs/sse-token（日志推流.py:102）
+   → 获得 5 分钟有效的 JWT（scope=sse）
 
 2. 拼入 URL: new EventSource("/api/logs/stream?token=<sse-token>")
 
-3. /api/logs/stream 端点自行验证 query token（日志.py:102-115）:
+3. /api/logs/stream 端点自行验证 query token（日志推流.py:251-265）:
    - 缺少 token → 401
    - JWT 解码失败或过期 → 401
    - scope != "sse" → 401（登录 JWT 不被接受）
 ```
 
+**日志推送鉴权：** `/api/logs/push` 端点使用 X-RPA-KEY 请求头鉴权（环境变量 `RPA_PUSH_KEY`），用于影刀等外部设备推送日志。
+
 **SSE 特性支持：**
 
 | 特性 | 是否支持 | 代码证据 |
 |------|----------|----------|
-| `id:` 事件 ID | **支持** | `yield f"id: {entry['seq']}\ndata: ...\n\n"` — 日志.py:138, 148 |
-| `Last-Event-ID` 断线续传 | **支持** | `last_event_id = request.headers.get("last-event-id", "")` — 日志.py:117 |
-| 心跳 | **支持** | `yield ": heartbeat\n\n"` 每 15 秒 — 日志.py:151 |
-| 历史补发 | **支持** | 连接时查 DB 中 `id > last_seq` 的记录，最多 500 条 — 日志.py:128-139 |
+| `id:` 事件 ID | **支持** | `yield f"id: {entry['seq']}\ndata: ...\n\n"` — 日志推流.py:279 |
+| `Last-Event-ID` 断线续传 | **不支持** | 使用 `since_seq` 查询参数实现增量推送 — 日志推流.py:234 |
+| 心跳 | **支持** | `yield f"data: {json.dumps({'type': 'heartbeat', ...})}\n\n"` 每 30 秒 — 日志推流.py:282, 300 |
+| 历史补发 | **支持** | 连接时从缓冲区补发历史日志（最多 500 条）— 日志推流.py:273-279 |
 
-**SSE 令牌 JWT 载荷（日志.py:94）：**
+**SSE 令牌 JWT 载荷（日志推流.py:117）：**
 
 ```json
 {"sub": "admin", "scope": "sse", "exp": 1700000000}
@@ -430,17 +439,16 @@ EventSource API 无法发送自定义 header，因此日志流采用专用的短
 **事件格式：**
 
 ```
-id: 42
 data: {"seq":42,"time":"2025-01-15 10:30:00","task_id":"task_001","machine":"worker-1","level":"进行中","msg":"步骤 3 完成"}
 
 ```
 
-- `id` 字段为日志自增序号（`push_logs.id`），客户端通过 `Last-Event-ID` 实现断线续传
-- 连接建立时先从 DB 补发 `> last_seq` 的历史日志（上限 `LOG_HISTORY_LIMIT`，默认 500 条）
-- 实时日志通过 `asyncio.Queue` 广播：`push_log()` 写入 DB 后向所有 `clients` 集合中的 queue 推送（日志.py:72-76）
-- 无新日志时每 15 秒发送 `: heartbeat\n\n` 保持连接（`asyncio.wait_for(queue.get(), timeout=15)` — 日志.py:145）
+- `seq` 字段为日志自增序号（`push_logs.id`），客户端通过 `since_seq` 参数实现增量推送
+- 连接建立时先从内存缓冲区补发历史日志（最多 500 条）— 日志推流.py:41
+- 实时日志通过 `asyncio.Queue` 广播：`push_log()` 写入 DB 后向所有 `_sse_clients` 集合中的 queue 推送（日志推流.py:196-197）
+- 无新日志时每 30 秒发送心跳保持连接（`asyncio.wait_for(client_queue.get(), timeout=30.0)` — 日志推流.py:288）
 
-**响应头（代码: 日志.py:158-162）：**
+**响应头（代码: 日志推流.py:310-318）：**
 
 ```
 Content-Type: text/event-stream
@@ -801,7 +809,7 @@ docker-compose up -d --build
 
 其他所有 `/api/*` 路径均需 `Authorization: Bearer <token>` 头。
 
-**SSE 令牌隔离：** `/api/logs/stream` 仅接受 `scope=sse` 的短期令牌（3 分钟），登录 JWT（无 scope 字段）不被接受，防止登录令牌泄露到 URL（`日志.py:109-110`）。
+**SSE 令牌隔离：** `/api/logs/stream` 仅接受 `scope=sse` 的短期令牌（5 分钟），登录 JWT（无 scope 字段）不被接受，防止登录令牌泄露到 URL（`日志推流.py:259-260`）。
 
 #### Python 沙箱 — 7 层纵深防御（`app/图引擎/工具加载器.py` + `_沙箱执行器.py`）
 
@@ -820,77 +828,6 @@ docker-compose up -d --build
 - Agent 的 `llm_api_key` 使用 AES-256-CBC 加密存储，密文前缀 `enc:`（`加密.py:17`）
 - 创建/更新 Agent 时调用 `加密()`（`智能体.py:128, 175`），读取时调用 `解密()`（`智能体.py:74`）
 - 飞书渠道日志中仅记录"已配置"/"未配置"，不泄露 API Key 内容
-
-### 7.2 回归测试套件
-
-#### test_sandbox — Python 沙箱安全测试
-
-**路径：** `tests/security/test_sandbox.py`
-
-**运行：**
-
-```bash
-cd backend
-python -m pytest ../tests/security/test_sandbox.py -v
-```
-
-| 用例 | 攻击方式 | 防御层 | 预期 |
-|------|----------|--------|------|
-| test_01 | `import os` 顶层 | L2（builtins 无 `__import__`） | NameError |
-| test_02 | `open()` 读文件 | L2（builtins 无 `open`） | NameError |
-| test_03 | `__import__('os')` 显式 | L1（编译期拒绝 `_` 前缀标识符） | 编译错误 |
-| test_04 | `().__class__.__bases__` MRO 链 | L1（编译期拒绝 `_` 前缀属性） | 编译错误 |
-| test_05 | `while True: pass` 死循环 | L7（subprocess timeout） | 超时终止 |
-| test_06 | `chr()` 拼出 "socket" | 安全 — 可拼字符串但无法 import | 返回 "socket" |
-| test_07 | 大量内存分配 (>128MB) | L6（Job Object） | 进程被终止 |
-| test_08 | `import subprocess` 函数内 | L2（builtins 无 `__import__`） | NameError |
-| test_09 | `import os` 运行期阻断 | L2（builtins 白名单） | NameError |
-| test_10 | socket/connect 网络探测（4 项子测试） | L4（import hook + sys.modules） | 全部 BLOCKED |
-| test_positive | `sum(range(100))` 合法代码 | — | 返回 "4950" |
-
-#### test_sse_token_auth — SSE 鉴权回归测试
-
-**路径：** `tests/regression/test_sse_token_auth.py`
-
-**运行：**
-
-```bash
-cd backend
-python -m pytest ../tests/regression/test_sse_token_auth.py -v
-```
-
-| 用例 | 说明 | 预期 |
-|------|------|------|
-| test_stream_no_token_returns_401 | 无 token 访问 `/api/logs/stream` | 401 |
-| test_stream_invalid_token_returns_401 | 错误 token 访问 stream | 401 |
-| test_stream_login_jwt_rejected | 登录 JWT 访问 stream（scope!=sse） | 401 |
-| test_sse_token_requires_auth | 无 Bearer 访问 `/api/logs/sse-token` | 401 |
-| test_sse_token_issued_with_correct_expiry | 已登录用户获取 sse-token | 200, expires_in=180 |
-| test_sse_token_has_sse_scope | sse-token JWT 包含 scope=sse | scope=sse, 含 exp/sub |
-| test_push_then_history_shows_log | push → history 端到端数据链路 | 数据一致 |
-
-#### test_p02_tool_query — 工具查询字段回归测试
-
-**路径：** `tests/regression/test_p02_tool_query.py`
-
-**运行：**
-
-```bash
-cd backend
-python -m pytest ../tests/regression/test_p02_tool_query.py -v
-```
-
-| 用例 | 说明 | 预期 |
-|------|------|------|
-| test_p02_query_by_id_returns_tool | 用工具 UUID 查询返回该工具 | 1 条结果 |
-| test_p02_query_by_name_must_miss | 用名称冒充 ID 查询返回空 | 0 条结果 |
-
-### 7.3 运行全部测试
-
-```bash
-cd backend
-python -m pytest ../tests/ -v
-```
 
 ---
 

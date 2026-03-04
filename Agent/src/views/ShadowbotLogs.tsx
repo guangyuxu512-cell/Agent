@@ -60,10 +60,18 @@ export default function ShadowbotLogs() {
     return {};
   });
   const [searchInput, setSearchInput] = useState('');
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('connecting');
+  const [dismissedUntil, setDismissedUntil] = useState<Record<string, number>>(() => {
+    const saved = sessionStorage.getItem('shadowbot_dismissed_until');
+    return saved ? JSON.parse(saved) : {};
+  });
 
   const tasksRef = useRef<Record<string, TaskState>>(tasks);
-  const isReplayingRef = useRef(true);
-  const lastSeqRef = useRef(0);
+  const dismissedUntilRef = useRef(dismissedUntil);
+  const lastSeqRef = useRef((() => {
+    const saved = localStorage.getItem('shadowbot_last_seq');
+    return saved ? parseInt(saved, 10) : 0;
+  })());
 
   // 机器管理相关状态
   const [machines, setMachines] = useState<Machine[]>([]);
@@ -82,17 +90,21 @@ export default function ShadowbotLogs() {
   const [appForm, setAppForm] = useState({ machine_id: '', app_name: '', description: '' });
 
   // 处理接收到的新日志
-  const handleNewLog = (log: LogEntry) => {
+  const handleNewLog = (log: LogEntry, isRealtime: boolean) => {
     if (log.seq && log.seq > lastSeqRef.current) {
       lastSeqRef.current = log.seq;
+      localStorage.setItem('shadowbot_last_seq', String(log.seq));
     }
-    setTasks(prev => {
-      const taskId = log.task_id;
-      
-      if (isReplayingRef.current && !prev[taskId]) {
-        return prev;
-      }
 
+    const taskId = log.task_id;
+    const dismissSeq = dismissedUntilRef.current[taskId] || 0;
+
+    // 只屏蔽关闭之前的旧日志，新日志(seq > dismissSeq)正常处理
+    if (log.seq && log.seq <= dismissSeq) {
+      return;
+    }
+
+    setTasks(prev => {
       const existingTask = prev[taskId] || {
         taskId,
         machine: '',
@@ -120,7 +132,7 @@ export default function ShadowbotLogs() {
       };
 
       let newTasks = { ...prev, [taskId]: updatedTask };
-      
+
       const taskEntries = Object.entries(newTasks);
       if (taskEntries.length > 20) {
         taskEntries.sort((a, b) => new Date(b[1].latestTime).getTime() - new Date(a[1].latestTime).getTime());
@@ -137,9 +149,16 @@ export default function ShadowbotLogs() {
     const taskId = searchInput.trim();
     if (!taskId) return;
 
+    // 用户主动搜索意味着想看，从 dismissedUntil 中移除
+    setDismissedUntil(prev => {
+      const newMap = { ...prev };
+      delete newMap[taskId];
+      return newMap;
+    });
+
     setTasks(prev => {
       if (prev[taskId]) return prev;
-      
+
       const now = new Date();
       const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
@@ -154,7 +173,7 @@ export default function ShadowbotLogs() {
           logs: []
         }
       };
-      
+
       const taskEntries = Object.entries(newTasks);
       if (taskEntries.length > 20) {
         taskEntries.sort((a, b) => new Date(b[1].latestTime).getTime() - new Date(a[1].latestTime).getTime());
@@ -170,6 +189,8 @@ export default function ShadowbotLogs() {
   };
 
   const handleDeleteTask = (taskId: string) => {
+    setDismissedUntil(prev => ({ ...prev, [taskId]: lastSeqRef.current }));
+
     setTasks(prev => {
       const newTasks = { ...prev };
       delete newTasks[taskId];
@@ -178,6 +199,12 @@ export default function ShadowbotLogs() {
       return newTasks;
     });
   };
+
+  // 同步 dismissedUntil 到 sessionStorage
+  useEffect(() => {
+    dismissedUntilRef.current = dismissedUntil;
+    sessionStorage.setItem('shadowbot_dismissed_until', JSON.stringify(dismissedUntil));
+  }, [dismissedUntil]);
 
   // ==================== 机器管理相关函数 ====================
 
@@ -454,55 +481,63 @@ export default function ShadowbotLogs() {
   }, [activeTab, filterMachineId]);
 
   useEffect(() => {
-    let cleanup: () => void;
-
-    const replayTimeout = setTimeout(() => {
-      isReplayingRef.current = false;
-    }, 2000);
-
-    // 先获取短期 SSE 令牌，再建立 EventSource
-    const token = localStorage.getItem('token');
     let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-    (async () => {
-      let sseToken = '';
-      if (token) {
-        try {
-          const res = await fetch('/api/logs/sse-token', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          const json = await res.json();
-          if (json.code === 0 && json.data?.token) {
-            sseToken = json.data.token;
-          }
-        } catch (e) {
-          console.error('获取 SSE token 失败:', e);
-        }
-      }
-
-      if (!sseToken) {
+    // SSE 连接函数（支持自动重连）
+    const connectSSE = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setConnectionStatus('disconnected');
         return;
       }
 
-      eventSource = new EventSource(`/api/logs/stream?token=${encodeURIComponent(sseToken)}`);
+      try {
+        const res = await fetch('/api/logs/sse-token', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const json = await res.json();
+        if (json.code === 0 && json.data?.token) {
+          const sseToken = json.data.token;
 
-      eventSource.onopen = () => {
-        // SSE 连接已建立
-      };
+          eventSource = new EventSource(`/api/logs/stream?token=${encodeURIComponent(sseToken)}`);
 
-      eventSource.onmessage = (event) => {
-        try {
-          const data: LogEntry = JSON.parse(event.data);
-          handleNewLog(data);
-        } catch (error) {
-          console.error('[SSE-DEBUG] 解析 SSE 数据失败:', error);
+          eventSource.onopen = () => {
+            setConnectionStatus('connected');
+          };
+
+          eventSource.onmessage = (event) => {
+            try {
+              const data: LogEntry = JSON.parse(event.data);
+              handleNewLog(data, true);
+            } catch (error) {
+              console.error('[SSE-DEBUG] 解析 SSE 数据失败:', error);
+            }
+          };
+
+          eventSource.onerror = () => {
+            setConnectionStatus('disconnected');
+            eventSource?.close();
+
+            // 自动重连（5秒后）
+            if (!reconnectTimer) {
+              reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connectSSE();
+              }, 5000);
+            }
+          };
+        } else {
+          setConnectionStatus('disconnected');
         }
-      };
+      } catch (e) {
+        console.error('获取 SSE token 失败:', e);
+        setConnectionStatus('disconnected');
+      }
+    };
 
-      eventSource.onerror = () => {
-        // SSE 连接错误，已回退到轮询模式
-      };
-    })();
+    // 初始连接
+    connectSSE();
 
     // 兜底轮询（带 auth token，修复 401）
     const pollInterval = setInterval(async () => {
@@ -513,20 +548,20 @@ export default function ShadowbotLogs() {
         });
         const json = await res.json();
         if (json.code === 0 && json.data?.logs?.length) {
-          for (const entry of json.data.logs) {
-            handleNewLog(entry);
+          // history 接口返回倒序，这里反转为正序再处理
+          const sortedLogs = [...json.data.logs].sort((a, b) => a.seq - b.seq);
+          for (const entry of sortedLogs) {
+            handleNewLog(entry, false);
           }
         }
       } catch (e) {}
     }, 3000);
 
-    cleanup = () => {
+    return () => {
       if (eventSource) eventSource.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       clearInterval(pollInterval);
-      clearTimeout(replayTimeout);
     };
-
-    return cleanup;
   }, []);
 
   const renderStatusBadge = (level: string) => {
@@ -610,9 +645,26 @@ export default function ShadowbotLogs() {
         <div>
           <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
             RPA运行日志
-            <span className="flex h-3 w-3 relative ml-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+            <span className="flex h-3 w-3 relative ml-2" title={
+              connectionStatus === 'connected' ? 'SSE 已连接' :
+              connectionStatus === 'connecting' ? 'SSE 连接中...' :
+              'SSE 断开（轮询兜底）'
+            }>
+              {connectionStatus === 'connected' && (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                </>
+              )}
+              {connectionStatus === 'connecting' && (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-yellow-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-yellow-500"></span>
+                </>
+              )}
+              {connectionStatus === 'disconnected' && (
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+              )}
             </span>
           </h2>
           <p className="text-sm text-slate-500 mt-1">输入 Task ID 订阅实时推流，完成后可手动关闭面板</p>

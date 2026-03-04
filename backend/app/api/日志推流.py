@@ -17,16 +17,20 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from jose import jwt, JWTError
 
 from app.db.数据库 import 获取数据库, 会话工厂
 from app.db.模型 import 推送日志模型, 机器模型
 from app.常量 import LOG_RETENTION_DAYS, LOG_HISTORY_LIMIT, LOG_DEFAULT_PAGE_SIZE
-from app.配置 import RPA密钥
+from app.配置 import RPA密钥, 密钥, 令牌算法
 from app.schemas import 统一响应
 
 logger = logging.getLogger(__name__)
 
 日志推流路由 = APIRouter(prefix="/api/logs", tags=["日志推流"])
+
+# SSE 短期令牌有效期（分钟）
+_SSE_TOKEN_MINUTES = 5
 
 # ========== 广播模式：asyncio.Queue + deque 缓冲区 ==========
 
@@ -94,6 +98,26 @@ async def _广播日志(日志字典: dict):
 
 
 # ========== 接口 ==========
+
+@日志推流路由.get("/sse-token")
+async def get_sse_token(request: Request):
+    """签发短期 SSE 令牌（5 分钟有效），仅限已登录用户调用。
+    前端拿到后拼入 EventSource URL: /api/logs/stream?token=xxx
+
+    返回：
+        {"code": 0, "data": {"token": "<short_lived_token>", "expires_in": 300}, "msg": "ok"}
+    """
+    username = getattr(request.state, "username", None)
+    if not username:
+        return JSONResponse(
+            status_code=401,
+            content={"code": 401, "data": None, "msg": "未授权"},
+        )
+    过期时间 = datetime.now(timezone.utc) + timedelta(minutes=_SSE_TOKEN_MINUTES)
+    载荷 = {"sub": username, "scope": "sse", "exp": 过期时间}
+    token = jwt.encode(载荷, 密钥, algorithm=令牌算法)
+    return {"code": 0, "data": {"token": token, "expires_in": _SSE_TOKEN_MINUTES * 60}, "msg": "ok"}
+
 
 @日志推流路由.post("/push")
 async def push_log(
@@ -205,12 +229,14 @@ async def push_log(
 @日志推流路由.get("/stream")
 async def log_stream(
     request: Request,
+    token: Optional[str] = Query(None, description="短期 SSE 令牌"),
     task_id: Optional[str] = Query(None, description="任务ID过滤"),
     since_seq: int = Query(0, description="从哪个 seq 开始（不含）"),
 ):
-    """SSE 日志推流（JWT 鉴权）
+    """SSE 日志推流（短期 token 鉴权）
 
     查询参数：
+        token: 必填，通过 /api/logs/sse-token 获取的短期令牌
         task_id: 可选，过滤指定任务的日志
         since_seq: 从哪个 seq 开始推送（不含该 seq）
 
@@ -219,9 +245,25 @@ async def log_stream(
         data: {"seq": 123, "time": "...", "task_id": "...", "machine": "...", "level": "...", "msg": "..."}
 
     注意：
-        - 此接口走 JWT 鉴权中间件，需要 Authorization: Bearer <token>
+        - 此接口使用短期 SSE token 鉴权（从 query param 读取）
         - 客户端断开连接后自动清理
     """
+    # ========== 短期 token 鉴权 ==========
+    if not token:
+        return JSONResponse(
+            status_code=401,
+            content={"code": 401, "data": None, "msg": "缺少 token 参数"},
+        )
+    try:
+        载荷 = jwt.decode(token, 密钥, algorithms=[令牌算法])
+        if 载荷.get("scope") != "sse":
+            raise JWTError("scope mismatch")
+    except JWTError:
+        return JSONResponse(
+            status_code=401,
+            content={"code": 401, "data": None, "msg": "token 无效或已过期"},
+        )
+
     # 创建客户端队列
     client_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
     _sse_clients.add(client_queue)
@@ -359,3 +401,23 @@ async def push_stats():
         "buffer_size": len(_log_buffer),
         "sse_clients": len(_sse_clients),
     })
+
+
+# ========== 日志清理 ==========
+
+def 清理过期日志():
+    """删除超过保留天数的日志"""
+    db = 会话工厂()
+    try:
+        截止时间 = datetime.now() - timedelta(days=LOG_RETENTION_DAYS)
+        删除数 = db.query(推送日志模型).filter(推送日志模型.创建时间 < 截止时间).delete()
+        db.commit()
+        if 删除数:
+            logger.info(f"[日志清理] 已删除 {删除数} 条过期日志（保留 {LOG_RETENTION_DAYS} 天）")
+        else:
+            logger.debug(f"[日志清理] 无过期日志需要清理（保留 {LOG_RETENTION_DAYS} 天）")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[日志清理] 失败: {e}", exc_info=True)
+    finally:
+        db.close()
