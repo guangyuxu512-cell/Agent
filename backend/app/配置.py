@@ -25,6 +25,11 @@ else:
 # ===== 数据库（Step 1） =====
 数据库地址 = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
+# ===== 生产环境配置 =====
+APP_ENV = os.getenv("APP_ENV", "dev").lower()  # dev / prod
+DISABLE_DOCS_IN_PROD = os.getenv("DISABLE_DOCS_IN_PROD", "true").lower() == "true"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO" if APP_ENV == "prod" else "DEBUG")
+
 # ===== CORS =====
 _cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
 if not _cors_origins_raw:
@@ -37,11 +42,6 @@ elif _cors_origins_raw == "*":
     CORS_ORIGINS = ["*"]
 else:
     CORS_ORIGINS = [origin.strip() for origin in _cors_origins_raw.split(",") if origin.strip()]
-
-# ===== 生产环境配置 =====
-APP_ENV = os.getenv("APP_ENV", "dev").lower()  # dev / prod
-DISABLE_DOCS_IN_PROD = os.getenv("DISABLE_DOCS_IN_PROD", "true").lower() == "true"
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO" if APP_ENV == "prod" else "DEBUG")
 
 # ===== 影刀推流鉴权 =====
 RPA密钥 = os.getenv("RPA_PUSH_KEY", "changeme-rpa-key-2026")
