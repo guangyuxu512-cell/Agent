@@ -96,6 +96,10 @@ async def 触发影刀(app_name: str) -> str:
         if not 机器:
             return f"错误：机器 '{machine_id}' 不存在"
 
+        # 新增：记录触发前的状态
+        触发前状态 = 机器.状态
+        logger.info(f"[触发影刀-调试] 触发前机器状态: {触发前状态}, 机器码: {machine_id}")
+
         # 状态映射：idle -> online, running -> busy
         状态映射 = {
             "idle": "online",
@@ -115,6 +119,21 @@ async def 触发影刀(app_name: str) -> str:
 
             if 结果.startswith("错误"):
                 return 结果
+
+            # 新增：刷新机器对象，检查状态是否被修改
+            db.refresh(机器)
+            触发后状态 = 机器.状态
+
+            if 触发前状态 != 触发后状态:
+                logger.error(
+                    f"[触发影刀-异常] 机器状态被意外修改！\n"
+                    f"  机器码: {machine_id}\n"
+                    f"  触发前: {触发前状态}\n"
+                    f"  触发后: {触发后状态}\n"
+                    f"  这不应该发生！"
+                )
+            else:
+                logger.info(f"[触发影刀-调试] 触发后机器状态未变: {触发后状态}")
 
             # 机器状态由影刀应用通过 HTTP 回调自行更新
             return f"已触发执行：应用 '{app_name}' 已发送到机器 '{机器.机器名称}'"

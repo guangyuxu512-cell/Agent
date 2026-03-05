@@ -85,3 +85,34 @@ def _自动迁移(db):
                 logger.info("[迁移] 已添加列 %s.%s", 表名, 列名)
             except Exception as e:
                 logger.error("[迁移] 添加列 %s.%s 失败: %s", 表名, 列名, e)
+
+
+# ========== SQLAlchemy 事件监听器：追踪机器状态变更 ==========
+
+from sqlalchemy import event
+import traceback
+
+@event.listens_for(Session, "before_flush")
+def 追踪机器状态变更(session, flush_context, instances):
+    """在提交前追踪所有机器状态的变更"""
+    from app.db.模型 import 机器模型
+
+    for obj in session.dirty:
+        if isinstance(obj, 机器模型):
+            # 检查状态是否被修改
+            状态历史 = session.get_history(obj, '状态')
+            if 状态历史.has_changes():
+                旧状态 = 状态历史.deleted[0] if 状态历史.deleted else None
+                新状态 = obj.状态
+
+                # 记录详细的调用栈
+                调用栈 = ''.join(traceback.format_stack())
+
+                logger.warning(
+                    f"[SQLAlchemy 事件] 检测到机器状态变更！\n"
+                    f"  机器码: {obj.机器码}\n"
+                    f"  机器名称: {obj.机器名称}\n"
+                    f"  旧状态: {旧状态}\n"
+                    f"  新状态: {新状态}\n"
+                    f"  调用栈:\n{调用栈}"
+                )
