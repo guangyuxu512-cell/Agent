@@ -1,4 +1,4 @@
-  import { useState, useEffect, useRef } from 'react';
+  import { useState, useEffect, useRef, useCallback } from 'react';
   import { Activity, CheckCircle2, AlertCircle, Monitor, Clock, Terminal, Search, X, Server, Package } from 'lucide-react';
 
   // 定义日志数据结构
@@ -60,24 +60,13 @@
       return {};
     });
     const [searchInput, setSearchInput] = useState('');
-    const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => {
-      const saved = localStorage.getItem('shadowbot_dismissed');
-      if (saved) {
-        try {
-          return new Set(JSON.parse(saved));
-        } catch (e) {
-          console.error('Failed to parse shadowbot_dismissed', e);
-        }
-      }
-      return new Set();
-    });
 
     const tasksRef = useRef<Record<string, TaskState>>(tasks);
-    const dismissedIdsRef = useRef(dismissedIds);
     const lastSeqRef = useRef((() => {
       const saved = localStorage.getItem('shadowbot_last_seq');
       return saved ? parseInt(saved, 10) : 0;
     })());
+    const baselineSeqRef = useRef(lastSeqRef.current);
 
     // 机器管理相关状态
     const [machines, setMachines] = useState<Machine[]>([]);
@@ -96,35 +85,25 @@
     const [appForm, setAppForm] = useState({ machine_id: '', app_name: '', description: '' });
 
     // 处理接收到的新日志
-    const handleNewLog = (log: LogEntry, isRealtime: boolean) => {
+    const handleNewLog = useCallback(async (log: LogEntry) => {
       if (log.seq && log.seq > lastSeqRef.current) {
         lastSeqRef.current = log.seq;
         localStorage.setItem('shadowbot_last_seq', String(log.seq));
       }
 
       const taskId = log.task_id;
-
-      // 如果是实时数据且该 taskId 在 dismissedIds 里，则从 dismissedIds 中移除它
-      if (isRealtime && dismissedIdsRef.current.has(taskId)) {
-        setDismissedIds(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(taskId);
-          return newSet;
-        });
-      }
-
-      // 如果是历史数据且该 taskId 在 dismissedIds 里，直接 return
-      if (!isRealtime && dismissedIdsRef.current.has(taskId)) {
-        return;
-      }
+      const isHistoricalCatchup = log.seq ? log.seq <= baselineSeqRef.current : false;
 
       setTasks(prev => {
-        // 如果是历史数据且 tasks 里不存在该 taskId，直接 return
-        if (!isRealtime && !prev[taskId]) {
+        // 如果是历史追赶且 tasks 中不存在该 taskId，直接返回
+        if (isHistoricalCatchup && !prev[taskId]) {
           return prev;
         }
 
-        const existingTask = prev[taskId] || {
+        const existingTask = prev[taskId];
+        const isNewPanel = !existingTask;
+
+        const taskState = existingTask || {
           taskId,
           machine: '',
           level: '',
@@ -134,17 +113,17 @@
         };
 
         // seq 去重：防止 SSE + 轮询重复
-        if (log.seq && existingTask.logs.some(l => l.seq === log.seq)) {
+        if (log.seq && taskState.logs.some(l => l.seq === log.seq)) {
           return prev;
         }
 
-        const updatedLogs = [log, ...existingTask.logs].slice(0, 50);
+        const updatedLogs = [log, ...taskState.logs].slice(0, 50);
 
-        // ★ 直接用最新收到的数据更新头部（去掉 isNewer 守卫）
+        // 直接用最新收到的数据更新头部
         const updatedTask: TaskState = {
-          ...existingTask,
-          machine: log.machine || existingTask.machine || '未知设备',
-          level: log.level || '',
+          ...taskState,
+          machine: log.machine || taskState.machine || '未知设备',
+          level: log.level || taskState.level || '',
           latestTime: log.time,
           latestMsg: log.msg,
           logs: updatedLogs
@@ -160,20 +139,55 @@
 
         tasksRef.current = newTasks;
         localStorage.setItem('shadowbot_logs', JSON.stringify(newTasks));
+
+        // 如果是新创建的面板且是真正的新推送（非历史追赶），拉取历史记录
+        if (isNewPanel && !isHistoricalCatchup) {
+          (async () => {
+            try {
+              const token = localStorage.getItem('token');
+              const res = await fetch(`/api/logs/history?task_id=${encodeURIComponent(taskId)}&limit=30`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+              });
+              const json = await res.json();
+              if (json.code === 0 && json.data?.logs?.length) {
+                const historyLogs = json.data.logs;
+
+                setTasks(prevTasks => {
+                  const currentTask = prevTasks[taskId];
+                  if (!currentTask) return prevTasks;
+
+                  // 合并历史日志，按 seq 去重
+                  const existingSeqs = new Set(currentTask.logs.map(l => l.seq).filter(Boolean));
+                  const newHistoryLogs = historyLogs.filter((l: LogEntry) => !l.seq || !existingSeqs.has(l.seq));
+
+                  const mergedLogs = [...currentTask.logs, ...newHistoryLogs]
+                    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                    .slice(0, 50);
+
+                  const updatedTaskWithHistory = {
+                    ...currentTask,
+                    logs: mergedLogs
+                  };
+
+                  const updatedTasks = { ...prevTasks, [taskId]: updatedTaskWithHistory };
+                  tasksRef.current = updatedTasks;
+                  localStorage.setItem('shadowbot_logs', JSON.stringify(updatedTasks));
+                  return updatedTasks;
+                });
+              }
+            } catch (e) {
+              console.error('Failed to fetch history for task:', taskId, e);
+            }
+          })();
+        }
+
         return newTasks;
       });
-    };
+    }, []);
 
     const handleSearch = () => {
       const taskId = searchInput.trim();
       if (!taskId) return;
-
-      // 用户主动搜索意味着想看，从 dismissedIds 中移除
-      setDismissedIds(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(taskId);
-        return newSet;
-      });
 
       setTasks(prev => {
         if (prev[taskId]) return prev;
@@ -208,12 +222,6 @@
     };
 
     const handleDeleteTask = (taskId: string) => {
-      setDismissedIds(prev => {
-        const newSet = new Set(prev);
-        newSet.add(taskId);
-        return newSet;
-      });
-
       setTasks(prev => {
         const newTasks = { ...prev };
         delete newTasks[taskId];
@@ -222,12 +230,6 @@
         return newTasks;
       });
     };
-
-    // 同步 dismissedIds 到 localStorage
-    useEffect(() => {
-      dismissedIdsRef.current = dismissedIds;
-      localStorage.setItem('shadowbot_dismissed', JSON.stringify([...dismissedIds]));
-    }, [dismissedIds]);
 
     // ==================== 机器管理相关函数 ====================
 
@@ -539,7 +541,7 @@
         eventSource.onmessage = (event) => {
           try {
             const data: LogEntry = JSON.parse(event.data);
-            handleNewLog(data, true);
+            handleNewLog(data);
           } catch (error) {
             console.error('[SSE-DEBUG] 解析 SSE 数据失败:', error);
           }
@@ -560,7 +562,7 @@
           const json = await res.json();
           if (json.code === 0 && json.data?.logs?.length) {
             for (const entry of json.data.logs) {
-              handleNewLog(entry, false);
+              handleNewLog(entry);
             }
           }
         } catch (e) {}
@@ -572,7 +574,7 @@
       };
 
       return cleanup;
-    }, []);
+    }, [handleNewLog]);
 
     const renderStatusBadge = (level: string) => {
       const safeLevel = level || '';
