@@ -144,7 +144,7 @@
         const updatedTask: TaskState = {
           ...existingTask,
           machine: log.machine || existingTask.machine || '未知设备',
-          level: log.level,
+          level: log.level || '',
           latestTime: log.time,
           latestMsg: log.msg,
           logs: updatedLogs
@@ -575,34 +575,35 @@
     }, []);
 
     const renderStatusBadge = (level: string) => {
-      if (level.includes('完成') || level.includes('成功')) {
+      const safeLevel = level || '';
+      if (safeLevel.includes('完成') || safeLevel.includes('成功')) {
         return (
           <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-medium border border-green-200">
             <CheckCircle2 size={14} />
-            {level}
+            {safeLevel}
           </span>
         );
       }
-      if (level.includes('异常') || level.includes('错误') || level.includes('失败')) {
+      if (safeLevel.includes('异常') || safeLevel.includes('错误') || safeLevel.includes('失败')) {
         return (
           <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-red-100 text-red-700 text-xs font-medium border border-red-200">
             <AlertCircle size={14} />
-            {level}
+            {safeLevel}
           </span>
         );
       }
-      if (level === '连接中') {
+      if (safeLevel === '连接中') {
         return (
           <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-medium border border-slate-200">
             <Activity size={14} />
-            {level}
+            {safeLevel}
           </span>
         );
       }
       return (
         <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-medium border border-blue-200">
           <Activity size={14} className="animate-pulse" />
-          {level}
+          {safeLevel}
         </span>
       );
     };
@@ -709,7 +710,7 @@
                       <span className="flex items-center gap-1"><Clock size={12} /> {task.logs[0]?.time || task.latestTime}</span>
                     </div>
                   </div>
-                  {renderStatusBadge(task.logs[0]?.level || task.level)}
+                  {renderStatusBadge(task.logs[0]?.level || task.level || '')}
                 </div>
                 
                 <div className="p-4 bg-blue-50/30 border-b border-blue-100/50">
@@ -730,10 +731,10 @@
                         <span className="text-slate-500 shrink-0">[{log.time}]</span>
                         <div className="flex-1 break-all">
                           <span className={
-                            log.level.includes('异常') || log.level.includes('错误') ? 'text-red-400' :
-                            log.level.includes('完成') ? 'text-green-400' : 'text-blue-300'
+                            (log.level || '').includes('异常') || (log.level || '').includes('错误') ? 'text-red-400' :
+                            (log.level || '').includes('完成') ? 'text-green-400' : 'text-blue-300'
                           }>
-                            [{log.level}]
+                            [{log.level || '未知'}]
                           </span>
                           {' '}
                           <span className="text-slate-300">
