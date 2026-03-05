@@ -5,7 +5,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
-from app.配置 import 数据库地址
+from app.配置 import 数据库地址, APP_ENV
 from app.db.模型 import Base, 用户模型
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 引擎 = create_engine(
     数据库地址,
     connect_args={"check_same_thread": False},  # SQLite 需要
-    echo=True  # 启用 SQL 查询日志，用于调试
+    echo=(APP_ENV != "prod")  # 生产环境关闭 SQL 日志
 )
 
 会话工厂 = sessionmaker(autocommit=False, autoflush=False, bind=引擎)
@@ -105,14 +105,17 @@ def 追踪机器状态变更(session, flush_context, instances):
                 旧状态 = 状态历史.deleted[0] if 状态历史.deleted else None
                 新状态 = obj.状态
 
-                # 记录详细的调用栈
-                调用栈 = ''.join(traceback.format_stack())
-
-                logger.warning(
-                    f"[SQLAlchemy 事件] 检测到机器状态变更！\n"
-                    f"  机器码: {obj.机器码}\n"
-                    f"  机器名称: {obj.机器名称}\n"
-                    f"  旧状态: {旧状态}\n"
-                    f"  新状态: {新状态}\n"
-                    f"  调用栈:\n{调用栈}"
-                )
+                if APP_ENV != "prod":
+                    # 开发环境：记录详细的调用栈
+                    调用栈 = ''.join(traceback.format_stack())
+                    logger.warning(
+                        f"[SQLAlchemy 事件] 检测到机器状态变更！\n"
+                        f"  机器码: {obj.机器码}\n"
+                        f"  机器名称: {obj.机器名称}\n"
+                        f"  旧状态: {旧状态}\n"
+                        f"  新状态: {新状态}\n"
+                        f"  调用栈:\n{调用栈}"
+                    )
+                else:
+                    # 生产环境：只记录简短信息
+                    logger.info(f"[状态变更] 机器 {obj.机器码} ({obj.机器名称}): {旧状态} -> {新状态}")

@@ -151,7 +151,7 @@ async def push_log(
         )
 
     if x_rpa_key != RPA密钥:
-        logger.warning("推送日志失败：X-RPA-KEY 错误 (收到: %s...)", x_rpa_key[:10])
+        logger.warning("推送日志失败：X-RPA-KEY 错误")
         return JSONResponse(
             status_code=403,
             content={"code": 403, "data": None, "msg": "X-RPA-KEY 错误"}

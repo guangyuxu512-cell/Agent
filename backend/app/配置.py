@@ -26,8 +26,14 @@ else:
 数据库地址 = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
 # ===== CORS =====
-_cors_origins_raw = os.getenv("CORS_ORIGINS", "*").strip()
-if _cors_origins_raw == "*":
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "").strip()
+if not _cors_origins_raw:
+    if APP_ENV == "prod":
+        raise ValueError("生产环境必须明确设置 CORS_ORIGINS（逗号分隔）")
+    CORS_ORIGINS = ["http://localhost:3000"]  # 开发环境默认
+elif _cors_origins_raw == "*":
+    if APP_ENV == "prod":
+        raise ValueError("生产环境 CORS_ORIGINS 不能为 '*'")
     CORS_ORIGINS = ["*"]
 else:
     CORS_ORIGINS = [origin.strip() for origin in _cors_origins_raw.split(",") if origin.strip()]
@@ -35,6 +41,7 @@ else:
 # ===== 生产环境配置 =====
 APP_ENV = os.getenv("APP_ENV", "dev").lower()  # dev / prod
 DISABLE_DOCS_IN_PROD = os.getenv("DISABLE_DOCS_IN_PROD", "true").lower() == "true"
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO" if APP_ENV == "prod" else "DEBUG")
 
 # ===== 影刀推流鉴权 =====
 RPA密钥 = os.getenv("RPA_PUSH_KEY", "changeme-rpa-key-2026")

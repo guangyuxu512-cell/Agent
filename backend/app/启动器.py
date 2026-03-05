@@ -17,8 +17,12 @@ file_handler.setLevel(logging.INFO)
 stream_handler = logging.StreamHandler(sys.stdout)
 stream_handler.setLevel(logging.INFO)
 
+# 从配置读取日志级别
+from app.配置 import LOG_LEVEL
+log_level = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format='%(asctime)s [%(levelname)s] %(name)s - %(message)s',
     handlers=[stream_handler, file_handler],
     force=True
@@ -253,6 +257,16 @@ async def 参数校验异常处理(request, exc):
     return JSONResponse(
         status_code=200,
         content={"code": 1, "data": None, "msg": msg}
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """全局异常处理器：捕获所有未处理的异常"""
+    logger.error(f"未处理的异常: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"code": 500, "data": None, "msg": "服务器内部错误"}
     )
 
 
