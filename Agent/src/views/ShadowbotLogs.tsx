@@ -540,10 +540,14 @@
 
         eventSource.onmessage = (event) => {
           try {
-            const data: LogEntry = JSON.parse(event.data);
+            const data = JSON.parse(event.data);
+            // 过滤心跳消息
+            if (data.type === 'heartbeat') return;
+            // 过滤缺少 task_id 的无效数据
+            if (!data.task_id) return;
             handleNewLog(data);
           } catch (error) {
-            console.error('[SSE-DEBUG] 解析 SSE 数据失败:', error);
+            console.error('[SSE] 解析数据失败:', error);
           }
         };
 
@@ -562,6 +566,7 @@
           const json = await res.json();
           if (json.code === 0 && json.data?.logs?.length) {
             for (const entry of json.data.logs) {
+              if (!entry.task_id) continue;  // 跳过无效数据
               handleNewLog(entry);
             }
           }
