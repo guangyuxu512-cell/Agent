@@ -162,6 +162,8 @@ async def SSE生成器(agent配置: dict, 消息列表: list, 对话id: str):
 
         # 流式执行 - 添加详细异常捕获
         try:
+            logger.info(f"[SSE] 开始调用 astream_events，消息列表长度: {len(消息列表)}")
+
             async for event in 图.astream_events(
                 {"messages": 消息列表},
                 version="v2",
@@ -187,6 +189,33 @@ async def SSE生成器(agent配置: dict, 消息列表: list, 对话id: str):
                     工具名 = event.get("name", "")
                     工具结果 = str(event.get("data", {}).get("output", ""))[:TOOL_RESULT_MAX_LEN]
                     yield f"data: {json.dumps({'type': 'tool_result', 'name': 工具名, 'result': 工具结果}, ensure_ascii=False)}\n\n"
+        except TypeError as type_error:
+            import traceback
+            import sys
+            错误堆栈 = traceback.format_exc()
+
+            # 获取详细的调用栈信息
+            tb = sys.exc_info()[2]
+            stack_summary = traceback.extract_tb(tb)
+
+            详细信息 = f"[SSE] TypeError 异常详情:\n"
+            详细信息 += f"错误消息: {str(type_error)}\n"
+            详细信息 += f"完整堆栈:\n{错误堆栈}\n"
+            详细信息 += f"\n调用栈详情:\n"
+            for frame in stack_summary:
+                详细信息 += f"  文件: {frame.filename}:{frame.lineno}\n"
+                详细信息 += f"  函数: {frame.name}\n"
+                详细信息 += f"  代码: {frame.line}\n"
+
+            logger.error(详细信息)
+            # 强制刷新日志
+            for handler in logger.handlers:
+                handler.flush()
+            # 同时输出到 stderr
+            print(详细信息, file=sys.stderr, flush=True)
+
+            yield f"data: {json.dumps({'type': 'error', 'content': f'类型错误 (by_alias): {str(type_error)}'}, ensure_ascii=False)}\n\n"
+            raise
         except Exception as stream_error:
             import traceback
             错误堆栈 = traceback.format_exc()

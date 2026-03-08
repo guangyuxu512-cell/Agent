@@ -2,11 +2,16 @@
 # FastAPI 入口 — 挂载中间件、注册路由、健康检查
 # ⭐ 问题7修复：新增 RequestValidationError 异常处理器
 # ⭐ Windows asyncio 修复：使用 WindowsSelectorEventLoopPolicy 避免 [Errno 22]
+# ⭐ Pydantic v2 兼容性修复：Monkey Patch OpenAI SDK
 
 import sys
 if sys.platform == "win32":
     import asyncio
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# ⭐ 在导入其他模块之前应用 Monkey Patches
+from app.monkey_patches import apply_all_patches
+apply_all_patches()
 
 import logging
 
