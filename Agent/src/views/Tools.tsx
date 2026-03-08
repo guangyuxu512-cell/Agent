@@ -39,6 +39,7 @@ const mapToolFromBackend = (item: any): Tool => ({
     ? JSON.stringify(item.parameters, null, 2)
     : String(item.parameters || ''),
   enabled: item.status === 'active',
+  method: typeof item.config === 'object' ? item.config?.method : undefined,
 });
 
 // 工具类型图标
@@ -63,7 +64,8 @@ export default function Tools() {
     path: '',
     description: '',
     parameters: '',
-    enabled: true
+    enabled: true,
+    method: 'GET'
   });
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -97,7 +99,8 @@ export default function Tools() {
         path: tool.path,
         description: tool.description,
         parameters: tool.parameters,
-        enabled: tool.enabled
+        enabled: tool.enabled,
+        method: tool.method || 'GET'
       });
     } else {
       setEditingId(null);
@@ -107,7 +110,8 @@ export default function Tools() {
         path: '',
         description: '',
         parameters: '',
-        enabled: true
+        enabled: true,
+        method: 'GET'
       });
     }
     setIsModalOpen(true);
@@ -134,7 +138,10 @@ export default function Tools() {
         description: formData.description,
         tool_type: mapToolTypeToBackend(formData.type),
         parameters: parsedParams,
-        config: { url: formData.path },
+        config: {
+          url: formData.path,
+          ...(formData.type === 'api' && formData.method ? { method: formData.method } : {})
+        },
         status: formData.enabled ? 'active' : 'inactive',
       };
 
@@ -487,6 +494,17 @@ export default function Tools() {
                   <label className="block text-sm font-medium text-slate-700 mb-1">路径 / URL</label>
                   <input required type="text" value={formData.path} onChange={e => setFormData({...formData, path: e.target.value})} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
                 </div>
+                {formData.type === 'api' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">请求方法</label>
+                    <select value={formData.method || 'GET'} onChange={e => setFormData({...formData, method: e.target.value as any})} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                      <option value="GET">GET</option>
+                      <option value="POST">POST</option>
+                      <option value="PUT">PUT</option>
+                      <option value="DELETE">DELETE</option>
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">描述</label>
                   <textarea required value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none h-20 resize-none" />

@@ -72,8 +72,30 @@ def _后台处理Agent(飞书配置: dict, agent配置: dict, 用户消息: str,
         logger.info(f"[后台处理] 开始处理Agent，对话ID: {对话id[:8]}..., 用户: {用户open_id[:8]}...")
 
         # 调用智能体（这里会耗时40-50秒）
-        回复, 调用了飞书工具 = 同步调用智能体(agent配置, 用户消息, 对话id)
-        logger.info(f"[后台处理] Agent调用完成，回复长度: {len(回复)}, 调用了飞书工具: {调用了飞书工具}")
+        try:
+            结果 = 同步调用智能体(agent配置, 用户消息, 对话id)
+            logger.info(f"[后台处理-调试] 同步调用智能体返回结果类型: {type(结果)}")
+
+            # 统一使用 AgentResult 对象
+            from app.图引擎.结果模型 import AgentResult
+            if isinstance(结果, AgentResult):
+                回复 = 结果.reply
+                调用了飞书工具 = 结果.used_feishu
+            else:
+                # 兼容旧格式
+                logger.warning(f"[后台处理-调试] 收到非 AgentResult 类型: {type(结果)}")
+                if isinstance(结果, tuple) and len(结果) >= 2:
+                    回复, 调用了飞书工具 = 结果[0], 结果[1]
+                else:
+                    回复 = str(结果)
+                    调用了飞书工具 = False
+
+            logger.info(f"[后台处理] Agent调用完成，回复长度: {len(回复)}, 调用了飞书工具: {调用了飞书工具}")
+        except Exception as e:
+            logger.error(f"[后台处理-错误] 调用智能体异常: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
         # ⭐ 修复：只有在Agent没有调用飞书工具发送消息时，才自动发送回复
         if not 调用了飞书工具:

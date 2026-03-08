@@ -6,4 +6,5 @@ export interface Tool {
   description: string;
   parameters: string;
   enabled: boolean;
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
 }

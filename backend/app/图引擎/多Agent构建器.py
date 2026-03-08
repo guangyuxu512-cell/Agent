@@ -92,14 +92,54 @@ def 构建多Agent图(
 
         supervisor模型 = 获取LLM模型(入口配置)
 
-        prompt = "你是一个任务调度主管。根据用户的请求，将任务分配给最合适的智能体处理。"
+        # 构建 Supervisor 的 prompt，明确指示使用 tool calling 进行路由
+        agent_names = [agent.name for agent in 子agents]
+        agent_descriptions = []
+        for i, agent配置 in enumerate(agents配置列表):
+            name = agent配置.get("name", f"agent_{i}")
+            role = agent配置.get("role", "")
+            desc = agent配置.get("description", "")
+            if role or desc:
+                agent_descriptions.append(f"- {name}: {role or desc}")
+            else:
+                agent_descriptions.append(f"- {name}")
+
+        prompt = f"""你是一个任务调度主管。你的职责是分析用户请求，并将任务委派给最合适的智能体处理。
+
+可用的智能体：
+{chr(10).join(agent_descriptions)}
+
+【重要】你必须遵守以下规则：
+1. 仔细分析用户的请求内容
+2. 选择最合适的智能体来处理该任务
+3. 【必须】使用 transfer_to_<agent_name> 工具将任务委派给选定的智能体
+4. 【禁止】自己回答问题或只用文字描述，你必须调用工具
+5. 【禁止】说"我将分配给xxx"这样的话，直接调用工具即可
+6. 每次只能委派给一个智能体
+
+示例：
+- 用户问题："帮我查询订单" → 调用 transfer_to_抖店助手 工具
+- 用户问题："写一段代码" → 调用 transfer_to_阿维斯 工具"""
+
         路由规则 = 编排配置.get("routingRules", "").strip()
         if 路由规则:
             prompt += f"\n\n路由规则：\n{路由规则}"
 
+        logger.info(f"[Supervisor] 可用智能体: {agent_names}")
+        logger.info(f"[Supervisor] Prompt 前100字: {prompt[:100]}...")
+
+        # 创建 Supervisor 图
         图 = create_supervisor(
             agents=子agents,
             model=supervisor模型,
             prompt=prompt,
+            parallel_tool_calls=False,  # 禁用并行调用，确保一次只委派一个任务
         )
-        return 图.compile()
+
+        # 编译图并添加调试
+        compiled_graph = 图.compile()
+
+        # 打印图的节点信息
+        logger.info(f"[Supervisor] 图节点: {list(compiled_graph.nodes.keys()) if hasattr(compiled_graph, 'nodes') else 'N/A'}")
+
+        return compiled_graph
