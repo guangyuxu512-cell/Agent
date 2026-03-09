@@ -8,6 +8,7 @@ import ShadowbotLogs from '../views/ShadowbotLogs';
 import FeishuTables from '../views/FeishuTables';
 import BasicConfig from '../views/BasicConfig';
 import Tools from '../views/Tools';
+import Workers from '../views/Workers';
 
 // 鉴权路由守卫：未登录（无 token）重定向到 /login
 const authLoader = () => {
@@ -32,6 +33,7 @@ export const router = createBrowserRouter([
       { index: true, element: <AgentChat /> },
       { path: 'agent', element: <Agent /> },
       { path: 'tools', element: <Tools /> },
+      { path: 'workers', element: <Workers /> },
       { path: 'logs', element: <ShadowbotLogs /> },
       { path: 'feishu', element: <FeishuTables /> },
       { path: 'config', element: <BasicConfig /> },

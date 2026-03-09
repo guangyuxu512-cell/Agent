@@ -1,11 +1,9 @@
 # app/调度器.py
-# APScheduler 封装 — 定时任务调度 + 执行逻辑
+# APScheduler 封装 — 定时任务调度 + Celery 投递
 
 import json
 import logging
-import time
-from uuid import uuid4
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -13,9 +11,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.date import DateTrigger
 
 from app.db.数据库 import 会话工厂
-from app.db.模型 import 定时任务模型, 任务记录模型, Agent模型, 工具模型
-from app.加密 import 解密
-from app.常量 import SCHEDULER_MISFIRE_GRACE, SCHEDULER_RESULT_MAX_LEN, SCHEDULER_ERROR_MAX_LEN
+from app.db.模型 import 定时任务模型, Worker模型
+from app.常量 import SCHEDULER_MISFIRE_GRACE
+from app.services.task_dispatcher import 派发定时任务
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +43,17 @@ async def 启动调度器():
         misfire_grace_time=3600
     )
     logger.info("[调度器] 已注册日志清理任务（每天 03:00）")
+
+    调度器实例.add_job(
+        检查离线Workers,
+        trigger="interval",
+        minutes=1,
+        id="worker_offline_check",
+        name="巡检离线Workers",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    logger.info("[调度器] 已注册 Worker 离线巡检任务（每 1 分钟）")
 
     # 从数据库加载所有 enabled 的任务
     db = 会话工厂()
@@ -158,111 +167,44 @@ def 移除任务(schedule_id: str):
         logger.info("[调度器] 已移除任务: %s", schedule_id)
 
 
-# ========== 任务执行 ==========
+# ========== 任务投递 ==========
 
 async def 执行定时任务(schedule_id: str):
     """
-    实际执行逻辑：
-    1. 从 DB 读取 schedule → 获取 agent_id + inputMessage
-    2. 获取 Agent 配置 + 工具
-    3. 构建 Agent 图，invoke（非流式）
-    4. 写入 schedule_logs 记录
-    5. 更新 schedule 的 last_run_at
+    APScheduler 到点后只负责把任务投递到 Celery。
     """
-    db = 会话工厂()
-    开始时间 = time.time()
-    日志记录 = None
-
     try:
-        # 1. 读取定时任务
-        任务 = db.query(定时任务模型).filter(定时任务模型.id == schedule_id).first()
-        if not 任务:
-            logger.error("[调度器] 任务不存在: %s", schedule_id)
+        dispatch_id = 派发定时任务(schedule_id, requested_by="scheduler")
+        if not dispatch_id:
+            logger.error("[调度器] 投递到 Celery 失败: %s", schedule_id)
+            return
+        logger.info("[调度器] 已投递到 Celery: schedule=%s dispatch=%s", schedule_id, dispatch_id)
+    except Exception as e:
+        logger.error("[调度器] 投递任务失败 %s: %s", schedule_id, e, exc_info=True)
+
+
+def 检查离线Workers():
+    """每分钟扫描 workers 表，60 秒无心跳标记为 offline。"""
+    db = 会话工厂()
+    try:
+        截止时间 = datetime.now() - timedelta(seconds=60)
+        待离线列表 = db.query(Worker模型).filter(
+            Worker模型.最后心跳.is_not(None),
+            Worker模型.最后心跳 < 截止时间,
+            Worker模型.状态 != "offline"
+        ).all()
+
+        if not 待离线列表:
             return
 
-        logger.info("[调度器] 开始执行任务: %s (%s)", 任务.名称, schedule_id)
+        for worker in 待离线列表:
+            worker.状态 = "offline"
+            worker.更新时间 = datetime.now()
 
-        # 创建执行日志
-        日志记录 = 任务记录模型(
-            id=str(uuid4()),
-            schedule_id=schedule_id,
-            状态="running",
-            开始时间=datetime.now(),
-        )
-        db.add(日志记录)
         db.commit()
-
-        # 2. 获取 Agent 配置
-        agent = db.query(Agent模型).filter(Agent模型.id == 任务.agent_id).first()
-        if not agent:
-            raise ValueError(f"Agent 不存在: {任务.agent_id}")
-
-        agent配置 = agent.to_config_dict(解密函数=解密)
-
-        # 3. 获取工具记录
-        工具ID原始 = agent配置.get("tools", [])
-        if isinstance(工具ID原始, str):
-            try:
-                工具ID列表 = json.loads(工具ID原始)
-            except (json.JSONDecodeError, TypeError):
-                工具ID列表 = []
-        else:
-            工具ID列表 = 工具ID原始 or []
-
-        工具记录列表 = []
-        if 工具ID列表:
-            工具记录 = db.query(工具模型).filter(
-                工具模型.id.in_(工具ID列表),
-                工具模型.状态 == "active"
-            ).all()
-            工具记录列表 = [
-                {
-                    "name": t.名称,
-                    "description": t.描述,
-                    "tool_type": t.类型,
-                    "parameters": t.参数定义,
-                    "config": t.配置,
-                }
-                for t in 工具记录
-            ]
-
-        # 4. 构建 Agent 图并执行（非流式）
-        from app.图引擎.构建器 import 构建Agent图
-
-        图 = 构建Agent图(agent配置, 工具记录列表=工具记录列表)
-
-        输入消息 = 任务.提示词 or "请执行任务"
-        结果 = await 图.ainvoke({"messages": [{"role": "user", "content": 输入消息}]})
-
-        # 提取最终回复
-        最终回复 = ""
-        if "messages" in 结果:
-            for msg in reversed(结果["messages"]):
-                if hasattr(msg, "content") and msg.content:
-                    最终回复 = msg.content if isinstance(msg.content, str) else str(msg.content)
-                    break
-
-        # 5. 更新日志记录
-        耗时 = time.time() - 开始时间
-        日志记录.状态 = "success"
-        日志记录.结果 = 最终回复[:SCHEDULER_RESULT_MAX_LEN]  # 截断过长结果
-        日志记录.结束时间 = datetime.now()
-
-        # 6. 更新任务的 last_run_at
-        任务.上次运行 = datetime.now()
-        db.commit()
-
-        logger.info("[调度器] 任务执行成功: %s (耗时 %.1fs)", 任务.名称, 耗时)
-
+        logger.info("[调度器] Worker 离线巡检完成，标记 %d 台机器离线", len(待离线列表))
     except Exception as e:
-        logger.error("[调度器] 任务执行失败 %s: %s", schedule_id, e)
-        if 日志记录:
-            日志记录.状态 = "failed"
-            日志记录.错误 = str(e)[:SCHEDULER_ERROR_MAX_LEN]
-            日志记录.结束时间 = datetime.now()
-            try:
-                db.commit()
-            except Exception:
-                db.rollback()
+        db.rollback()
+        logger.error("[调度器] Worker 离线巡检失败: %s", e, exc_info=True)
     finally:
         db.close()

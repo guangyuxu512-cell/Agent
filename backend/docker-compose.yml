@@ -1,5 +1,12 @@
 version: "3.8"
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   backend:
     build: .
     container_name: agent-backend
@@ -8,6 +15,8 @@ services:
     volumes:
       - ./data:/app/data        # SQLite 数据持久化
       - ./.env:/app/.env        # 环境变量
+    depends_on:
+      - redis
     restart: unless-stopped
 
     # ========== 资源限制（P0 安全：防止工具执行耗尽宿主机资源） ==========

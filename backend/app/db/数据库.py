@@ -1,7 +1,7 @@
 import os
 import logging
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, event
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 会话工厂 = sessionmaker(autocommit=False, autoflush=False, bind=引擎)
 
 密码工具 = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+if 数据库地址.startswith("sqlite"):
+    @event.listens_for(引擎, "connect")
+    def _配置_sqlite连接(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 
 # ========== 获取数据库会话 ==========
@@ -86,10 +95,18 @@ def _自动迁移(db):
             except Exception as e:
                 logger.error("[迁移] 添加列 %s.%s 失败: %s", 表名, 列名, e)
 
+    if 数据库地址.startswith("sqlite"):
+        try:
+            db.execute(text("PRAGMA journal_mode=WAL"))
+            db.execute(text("PRAGMA synchronous=NORMAL"))
+            db.commit()
+            logger.info("[初始化] SQLite WAL 模式已启用")
+        except Exception as e:
+            logger.error("[初始化] 启用 SQLite WAL 失败: %s", e)
+
 
 # ========== SQLAlchemy 事件监听器：追踪机器状态变更 ==========
 
-from sqlalchemy import event
 import traceback
 
 @event.listens_for(Session, "before_flush")

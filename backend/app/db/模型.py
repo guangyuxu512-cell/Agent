@@ -262,3 +262,37 @@ class 任务队列模型(基础模型):
     创建时间 = Column("created_at", DateTime, default=func.now())
     触发时间 = Column("triggered_at", DateTime, default=None)
     错误 = Column("error", Text, default=None)
+
+
+# ==================== 表 17：Celery Workers ====================
+class Worker模型(基础模型):
+    __tablename__ = "workers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    机器码 = Column("machine_id", String(100), unique=True, nullable=False)
+    主机名 = Column("hostname", String(200), nullable=False, default="")
+    IP地址 = Column("ip", String(64), nullable=False, default="")
+    队列名 = Column("queue_name", String(200), nullable=False)
+    状态 = Column("status", String(20), default="offline")  # online / offline / busy
+    最后心跳 = Column("last_heartbeat", DateTime, default=None)
+    标签 = Column("tags", Text, default="[]")
+    创建时间 = Column("created_at", DateTime, default=func.now())
+    更新时间 = Column("updated_at", DateTime, default=func.now(), onupdate=func.now())
+
+
+# ==================== 表 18：任务派发记录 ====================
+class 任务派发模型(基础模型):
+    __tablename__ = "task_dispatches"
+
+    dispatch_id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    任务名 = Column("task_name", String(200), nullable=False)
+    机器码 = Column("machine_id", String(100), default="")
+    队列名 = Column("queue_name", String(200), nullable=False)
+    schedule_id = Column(String(36), default=None)
+    状态 = Column("status", String(20), default="pending")  # pending / running / success / failed
+    载荷引用 = Column("payload_ref", Text, default="")
+    请求来源 = Column("requested_by", String(100), default="")
+    重试次数 = Column("retry_count", Integer, default=0)
+    提交时间 = Column("submitted_at", DateTime, default=func.now())
+    完成时间 = Column("finished_at", DateTime, default=None)
+    错误信息 = Column("error_message", Text, default=None)
