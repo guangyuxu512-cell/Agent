@@ -26,9 +26,9 @@ else:
 数据库地址 = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
 # ===== Celery / Redis =====
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = os.getenv("REDIS_URL", "redis://192.168.0.43:6380/0")
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", REDIS_URL)
-CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", REDIS_URL)
 CELERY_DEFAULT_QUEUE = os.getenv("CELERY_DEFAULT_QUEUE", "worker.default")
 
 # ===== 生产环境配置 =====

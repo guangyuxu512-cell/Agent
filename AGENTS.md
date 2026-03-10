@@ -1,40 +1,105 @@
-# Repository Guidelines
+# AGENTS.md
 
-## 项目结构与模块组织
+> 根目录版仅保留摘要与索引。  
+> 详细规范已按主题拆分到 `docs/`，需要细节时优先查对应文档。
 
-- `Agent/` 是 React + TypeScript + Vite 前端；页面在 `src/views/`，通用组件在 `src/components/`，接口封装在 `src/api/`，类型定义在 `src/types/`，路由配置在 `src/router/`。
-- `backend/` 是 FastAPI 服务；路由在 `app/api/`，核心编排与工具执行在 `app/图引擎/`，飞书集成在 `app/飞书/`，数据库层在 `app/db/`。
-- `docs/` 保存架构、部署与专题说明；根目录的 `test_doudian.py` 是本地联调脚本，不替代正式测试。
+## 一、技术栈概要
 
-## 构建、测试与开发命令
+- 前端：`Agent/`，React + TypeScript + Vite，路由入口在 `Agent/src/router/index.tsx`
+- 后端：`backend/`，FastAPI + SQLAlchemy + Uvicorn
+- 数据库：SQLite，默认文件为 `backend/data/app.db`
+- 消息队列：Redis + Celery
+- 调度：APScheduler + Celery
+- 实时通信：HTTP + SSE
+- 外部集成：飞书、OpenAI 兼容接口、RAGFlow、SMTP、影刀 / Shadowbot、外部 Worker
 
-- `cd Agent && npm install && npm run dev`：启动前端开发环境，默认监听 `3000` 端口。
-- `cd Agent && npm run build`：构建前端产物；`cd Agent && npm run lint` 运行 TypeScript 类型检查。
-- `cd backend && pip install -r requirements.txt`：安装后端依赖。
-- `cd backend && python -m uvicorn app.启动器:app --reload --port 8001`：启动本地 FastAPI 服务。
-- `cd backend && pytest`：运行后端测试；需要接口联调时，可在仓库根目录执行 `python test_doudian.py`。
-- `cd backend && docker-compose up -d` 与 `cd Agent && docker-compose up -d`：分别启动后端或前端容器。
+## 二、命名规范
 
-## 编码风格与命名约定
+### 2.1 后端
 
-- 前端使用 2 空格缩进、单引号、函数组件；组件和视图文件使用 `PascalCase`，API、store、类型模块使用语义化英文名，如 `chatStore.ts`、`agents.ts`。
-- 后端遵循 PEP 8 与 4 空格缩进；按现有约定保留中文领域模块名，如 `app/api/对话.py`、`app/图引擎/工具加载器.py`。
-- 新逻辑优先放入对应分层，避免在路由层堆积业务代码。仓库未配置独立格式化工具，提交前至少运行 `npm run lint`，并保持与周边文件一致的导入顺序、空行和注释风格。
+- 遵循 PEP 8 与 4 空格缩进
+- 保留现有中文领域模块命名，不要随意英文化重命名
+- 路由层放在 `backend/app/api/`
+- 业务逻辑优先下沉到 `services/`、`tasks/`、`图引擎/`
 
-## 测试指南
+### 2.2 前端
 
-- Pytest 已在 `backend/pytest.ini` 中配置，测试文件命名为 `test_*.py`，测试类为 `Test*`，测试函数为 `test_*`。
-- 新增后端测试统一放在 `backend/tests/`，优先为改动模块补充最小回归用例，例如 `backend/tests/test_对话.py`。
-- 仓库当前没有前端自动化测试框架，也没有强制覆盖率阈值；每次功能变更至少提供 1 条可复现的手动验证步骤，涉及 UI 时附截图，涉及 SSE 或飞书时附关键日志或请求示例。
+- 2 空格缩进、单引号、函数组件
+- 页面放在 `Agent/src/views/`
+- 通用组件放在 `Agent/src/components/`
+- API 封装放在 `Agent/src/api/`
+- 类型定义放在 `Agent/src/types/`
 
-## 提交与 Pull Request 规范
+### 2.3 其他命名约定
 
-- 提交标题以简短中文动词短语为主，历史中常见写法有 `修复`、`优化`、`修改`、`升级` 和 `feat:`，例如：`修复前端：编排页面空白问题`。
-- Pull Request 需说明变更目的、影响目录、配置或数据变更以及验证结果；前端改动附截图，后端接口改动附示例请求、响应或日志片段。
-- 若修改 `docs/`、`docker-compose.yml`、环境变量约定或数据库模型，请在同一 PR 中同步更新文档和部署说明。
+- API 路由对外统一使用英文路径
+- 数据库表名与字段名以英文 snake_case 为主
+- `machines` 与 `workers` 不是同一概念，修改前先确认语义
 
-## 安全与配置提示
+## 三、架构核心原则
 
-- 不要提交真实密钥；前端配置位于 `Agent/.env*`，后端配置位于 `backend/.env`。
-- 生产环境至少显式设置 `JWT_SECRET_KEY`、`CORS_ORIGINS`、`OPENAI_API_KEY` 与 `RPA_PUSH_KEY`。
-- SQLite 数据默认写入 `backend/data/`；修改数据库相关代码前先备份本地数据。
+- 路由层保持薄，业务逻辑不要堆在 FastAPI 接口里
+- 前端页面负责展示与交互，不复制后端业务规则
+- 统一响应、统一鉴权、统一配置入口，避免各处私有协议
+- 涉及实时能力时，优先遵守现有 HTTP + SSE + Celery 链路
+- 涉及数据库结构、环境变量、Docker、回调协议时，同步更新文档
+
+## 四、协作规范
+
+- 当前仓库实际偏向单主干协作，默认围绕 `main`
+- Commit 标题沿用中文动词短语风格，例如：
+  - `修复...`
+  - `优化...`
+  - `修改...`
+  - `升级...`
+  - `feat: ...`
+- PR / 交付说明至少包含：
+  - 变更目的
+  - 影响目录
+  - 配置或数据变更
+  - 验证结果
+- 前端改动建议附截图
+- 后端接口改动建议附请求 / 响应示例或关键日志
+- 每次功能变更至少给出 1 条可复现的验证步骤
+
+## 五、禁止事项（红线）
+
+- 不要提交真实密钥、真实口令、真实生产地址
+- 不要绕过 `app/加密.py` 长期明文存储敏感字段
+- 不要删除或延后 `backend/app/启动器.py` 顶部的 `apply_all_patches()`
+- 不要把新业务逻辑大量堆在 FastAPI 路由层
+- 不要在未备份 `backend/data/` 的情况下直接改数据库结构或做破坏性数据处理
+- 不要把 `Agent/README.md`、`Agent/.env.example` 里的模板内容当成当前业务事实
+- 不要把日志 SSE 改成自定义 Header 鉴权；浏览器 `EventSource` 不支持
+
+## 六、docs/ 目录索引
+
+- `docs/architecture.md`
+  - 分层设计、模块关系、目录结构、核心模块、性能敏感点
+- `docs/api-spec.md`
+  - 路由清单、统一响应、分页协议、错误码、鉴权方式
+- `docs/database.md`
+  - 数据库表结构、字段说明、表间关系、使用注意事项
+- `docs/coding-style.md`
+  - 代码风格、命名规范、落位原则、协作要求、常见坑点
+- `docs/callback.md`
+  - Worker / Agent / 飞书 / 影刀 / SSE / Celery 派发链路与回调格式
+- `docs/testing.md`
+  - pytest 现状、联调脚本、测试策略、手工验证建议
+- `docs/frontend.md`
+  - 前端页面设计、路由、页面职责、接口分层、前端环境变量
+- `docs/deployment.md`
+  - Docker、`.env`、本地启动、外部服务、部署注意事项
+
+## 七、使用建议
+
+- 改架构、模块边界、目录结构：先看 `docs/architecture.md`
+- 改接口或联调外部系统：先看 `docs/api-spec.md` 和 `docs/callback.md`
+- 改表结构、字段、状态流转：先看 `docs/database.md`
+- 改代码风格、命名、代码落位：先看 `docs/coding-style.md`
+- 改页面、路由、前端接口：先看 `docs/frontend.md`
+- 改 `.env`、Docker、部署流程：先看 `docs/deployment.md`
+- 补验证说明或梳理测试方式：先看 `docs/testing.md`
+
+生成日期：2026-03-10  
+本文件为摘要索引版，请结合 `docs/` 中的专题文档使用。

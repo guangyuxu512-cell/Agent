@@ -26,6 +26,9 @@ dosc/
 # IDE
 .vscode/
 .claude/
+.roles/
+.pipeline/
+
 
 # 调试产物
 openapi*.json

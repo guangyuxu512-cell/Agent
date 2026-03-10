@@ -1,12 +1,12 @@
 from celery import Celery
 
-from app.配置 import CELERY_BROKER_URL, CELERY_RESULT_BACKEND, CELERY_DEFAULT_QUEUE
+from app.配置 import REDIS_URL, CELERY_DEFAULT_QUEUE
 
 
 celery_app = Celery(
     "agent_backend",
-    broker=CELERY_BROKER_URL,
-    backend=CELERY_RESULT_BACKEND,
+    broker=REDIS_URL,
+    backend=REDIS_URL,
 )
 
 celery_app.conf.update(
