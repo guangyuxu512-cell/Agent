@@ -264,22 +264,6 @@ class 任务队列模型(基础模型):
     错误 = Column("error", Text, default=None)
 
 
-# ==================== 表 17：Celery Workers ====================
-class Worker模型(基础模型):
-    __tablename__ = "workers"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    机器码 = Column("machine_id", String(100), unique=True, nullable=False)
-    主机名 = Column("hostname", String(200), nullable=False, default="")
-    IP地址 = Column("ip", String(64), nullable=False, default="")
-    队列名 = Column("queue_name", String(200), nullable=False)
-    状态 = Column("status", String(20), default="offline")  # online / offline / busy
-    最后心跳 = Column("last_heartbeat", DateTime, default=None)
-    标签 = Column("tags", Text, default="[]")
-    创建时间 = Column("created_at", DateTime, default=func.now())
-    更新时间 = Column("updated_at", DateTime, default=func.now(), onupdate=func.now())
-
-
 # ==================== 表 18：任务派发记录 ====================
 class 任务派发模型(基础模型):
     __tablename__ = "task_dispatches"
@@ -296,3 +280,6 @@ class 任务派发模型(基础模型):
     提交时间 = Column("submitted_at", DateTime, default=func.now())
     完成时间 = Column("finished_at", DateTime, default=None)
     错误信息 = Column("error_message", Text, default=None)
+
+
+from app.db.worker模型 import Worker模型  # noqa: E402

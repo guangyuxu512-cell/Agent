@@ -5,20 +5,23 @@ import { Worker, WorkerStatus } from '../types/worker';
 
 const statusOptions: Array<{ value: '' | WorkerStatus; label: string }> = [
   { value: '', label: '全部状态' },
-  { value: 'online', label: '在线' },
-  { value: 'busy', label: '忙碌' },
+  { value: 'idle', label: '空闲' },
+  { value: 'running', label: '运行中' },
+  { value: 'error', label: '异常' },
   { value: 'offline', label: '离线' },
 ];
 
 const statusStyles: Record<WorkerStatus, string> = {
-  online: 'bg-emerald-100 text-emerald-700',
-  busy: 'bg-amber-100 text-amber-700',
+  idle: 'bg-emerald-100 text-emerald-700',
+  running: 'bg-amber-100 text-amber-700',
+  error: 'bg-rose-100 text-rose-700',
   offline: 'bg-slate-200 text-slate-700',
 };
 
 const statusText: Record<WorkerStatus, string> = {
-  online: '在线',
-  busy: '忙碌',
+  idle: '空闲',
+  running: '运行中',
+  error: '异常',
   offline: '离线',
 };
 
@@ -41,12 +44,12 @@ export default function Workers() {
     try {
       const res = await getWorkers(status || undefined);
       if (res.code !== 0) {
-        setError(res.msg || '获取机器列表失败');
+        setError(res.msg || '获取 Worker 列表失败');
         return;
       }
       setWorkers(res.data?.list || []);
     } catch (err: any) {
-      setError(err?.message || '获取机器列表失败');
+      setError(err?.message || '获取 Worker 列表失败');
     } finally {
       setLoading(false);
     }
@@ -65,7 +68,7 @@ export default function Workers() {
         acc[item.status] += 1;
         return acc;
       },
-      { total: 0, online: 0, busy: 0, offline: 0 }
+      { total: 0, idle: 0, running: 0, error: 0, offline: 0 }
     );
   }, [workers]);
 
@@ -73,8 +76,8 @@ export default function Workers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-semibold text-slate-900">机器管理</h2>
-          <p className="mt-1 text-sm text-slate-500">展示 Worker 列表、在线状态和最近一次心跳。</p>
+          <h2 className="text-2xl font-semibold text-slate-900">工人列表</h2>
+          <p className="mt-1 text-sm text-slate-500">展示外部 Worker 脚本注册的机器、队列和最近一次心跳。</p>
         </div>
         <button
           onClick={fetchWorkers}
@@ -85,18 +88,22 @@ export default function Workers() {
         </button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-sm text-slate-500">机器总数</div>
           <div className="mt-2 text-2xl font-semibold text-slate-900">{summary.total}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-sm text-slate-500">在线</div>
-          <div className="mt-2 text-2xl font-semibold text-emerald-600">{summary.online}</div>
+          <div className="text-sm text-slate-500">空闲</div>
+          <div className="mt-2 text-2xl font-semibold text-emerald-600">{summary.idle}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-sm text-slate-500">忙碌</div>
-          <div className="mt-2 text-2xl font-semibold text-amber-600">{summary.busy}</div>
+          <div className="text-sm text-slate-500">运行中</div>
+          <div className="mt-2 text-2xl font-semibold text-amber-600">{summary.running}</div>
+        </div>
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="text-sm text-slate-500">异常</div>
+          <div className="mt-2 text-2xl font-semibold text-rose-600">{summary.error}</div>
         </div>
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="text-sm text-slate-500">离线</div>
@@ -149,7 +156,7 @@ export default function Workers() {
               {workers.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
-                    {loading ? '正在加载机器列表…' : '暂无机器数据'}
+                    {loading ? '正在加载 Worker 列表…' : '暂无 Worker 数据'}
                   </td>
                 </tr>
               ) : (
@@ -161,18 +168,16 @@ export default function Workers() {
                         {worker.machine_id}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{worker.hostname || '-'}</td>
-                    <td className="px-4 py-3 text-slate-700">{worker.ip || '-'}</td>
-                    <td className="px-4 py-3 text-slate-700">{worker.queue_name}</td>
+                    <td className="px-4 py-3 text-slate-700">{worker.machine_name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">-</td>
+                    <td className="px-4 py-3 text-slate-700">{worker.queue_name || `worker.${worker.machine_id}`}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusStyles[worker.status]}`}>
                         {statusText[worker.status]}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-slate-700">{formatTime(worker.last_heartbeat)}</td>
-                    <td className="px-4 py-3 text-slate-700">
-                      {worker.tags?.length ? worker.tags.join('、') : '-'}
-                    </td>
+                    <td className="px-4 py-3 text-slate-700">-</td>
                   </tr>
                 ))
               )}

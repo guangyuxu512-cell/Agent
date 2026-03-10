@@ -234,14 +234,12 @@
 
 - `id`
 - `machine_id`
-- `hostname`
-- `ip`
+- `machine_name`
 - `queue_name`
-- `status`：`online / offline / busy`
+- `status`：`idle / running / offline / error`
 - `last_heartbeat`
-- `tags`
 - `created_at` / `updated_at`
-- 用途：Celery Worker 元数据
+- 用途：外部 Worker 脚本机器元数据
 
 ### 3.18 `task_dispatches`
 

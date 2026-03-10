@@ -1,5 +1,17 @@
   import { useState, useEffect, useRef, useCallback } from 'react';
   import { Activity, CheckCircle2, AlertCircle, Monitor, Clock, Terminal, Search, X, Server, Package } from 'lucide-react';
+  import {
+    createMachine,
+    createMachineApp,
+    deleteMachine,
+    deleteMachineApp,
+    getMachineApps,
+    getMachines,
+    type Machine,
+    type MachineApp,
+    updateMachine,
+    updateMachineApp,
+  } from '../api/machines';
 
   // 定义日志数据结构
   interface LogEntry {
@@ -18,27 +30,6 @@
     latestTime: string;
     latestMsg: any;
     logs: LogEntry[];
-  }
-
-  // 机器管理数据结构
-  interface Machine {
-    id: number;
-    machine_id: string;
-    machine_name: string;
-    status: 'idle' | 'running' | 'error' | 'offline';
-    last_heartbeat: string | null;
-    created_at: string;
-    updated_at: string;
-  }
-
-  // 应用绑定数据结构
-  interface MachineApp {
-    id: number;
-    machine_id: string;
-    app_name: string;
-    description: string;
-    enabled: boolean;
-    created_at: string;
   }
 
   type TabType = 'logs' | 'machines' | 'apps';
@@ -83,6 +74,13 @@
     const [showDeleteAppConfirm, setShowDeleteAppConfirm] = useState(false);
     const [currentApp, setCurrentApp] = useState<MachineApp | null>(null);
     const [appForm, setAppForm] = useState({ machine_id: '', app_name: '', description: '' });
+
+    const getErrorMessage = (error: unknown, fallback: string) => {
+      if (error instanceof Error && error.message) {
+        return error.message;
+      }
+      return fallback;
+    };
 
     // 处理接收到的新日志
     const handleNewLog = useCallback(async (log: LogEntry) => {
@@ -236,14 +234,7 @@
     // 获取机器列表
     const fetchMachines = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/machines', {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        });
-        const json = await res.json();
-        if (json.code === 0 && json.data) {
-          setMachines(json.data);
-        }
+        setMachines(await getMachines());
       } catch (e) {
         console.error('获取机器列表失败:', e);
       }
@@ -257,30 +248,16 @@
       }
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/machines', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            machine_id: machineForm.machine_id.trim(),
-            machine_name: machineForm.machine_name.trim()
-          })
+        await createMachine({
+          machine_id: machineForm.machine_id.trim(),
+          machine_name: machineForm.machine_name.trim(),
         });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          setShowAddMachineModal(false);
-          setMachineForm({ machine_id: '', machine_name: '' });
-          fetchMachines();
-        } else {
-          alert(json.msg || '添加失败');
-        }
+        setShowAddMachineModal(false);
+        setMachineForm({ machine_id: '', machine_name: '' });
+        fetchMachines();
       } catch (e) {
         console.error('添加机器失败:', e);
-        alert('添加失败');
+        alert(getErrorMessage(e, '添加失败'));
       }
     };
 
@@ -292,30 +269,16 @@
       }
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/machines/${currentMachine.machine_id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            machine_name: machineForm.machine_name.trim()
-          })
+        await updateMachine(currentMachine.machine_id, {
+          machine_name: machineForm.machine_name.trim(),
         });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          setShowEditMachineModal(false);
-          setCurrentMachine(null);
-          setMachineForm({ machine_id: '', machine_name: '' });
-          fetchMachines();
-        } else {
-          alert(json.msg || '编辑失败');
-        }
+        setShowEditMachineModal(false);
+        setCurrentMachine(null);
+        setMachineForm({ machine_id: '', machine_name: '' });
+        fetchMachines();
       } catch (e) {
         console.error('编辑机器失败:', e);
-        alert('编辑失败');
+        alert(getErrorMessage(e, '编辑失败'));
       }
     };
 
@@ -324,23 +287,13 @@
       if (!currentMachine) return;
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/machines/${currentMachine.machine_id}`, {
-          method: 'DELETE',
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          setShowDeleteMachineConfirm(false);
-          setCurrentMachine(null);
-          fetchMachines();
-        } else {
-          alert(json.msg || '删除失败');
-        }
+        await deleteMachine(currentMachine.machine_id);
+        setShowDeleteMachineConfirm(false);
+        setCurrentMachine(null);
+        fetchMachines();
       } catch (e) {
         console.error('删除机器失败:', e);
-        alert('删除失败');
+        alert(getErrorMessage(e, '删除失败'));
       }
     };
 
@@ -395,15 +348,7 @@
     // 获取应用绑定列表
     const fetchMachineApps = async (machineId?: string) => {
       try {
-        const token = localStorage.getItem('token');
-        const url = machineId ? `/api/machine-apps?machine_id=${encodeURIComponent(machineId)}` : '/api/machine-apps';
-        const res = await fetch(url, {
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        });
-        const json = await res.json();
-        if (json.code === 0 && json.data) {
-          setMachineApps(json.data);
-        }
+        setMachineApps(await getMachineApps(machineId));
       } catch (e) {
         console.error('获取应用绑定列表失败:', e);
       }
@@ -417,58 +362,30 @@
       }
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch('/api/machine-apps', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            machine_id: appForm.machine_id,
-            app_name: appForm.app_name.trim(),
-            description: appForm.description.trim()
-          })
+        await createMachineApp({
+          machine_id: appForm.machine_id,
+          app_name: appForm.app_name.trim(),
+          description: appForm.description.trim(),
         });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          setShowAddAppModal(false);
-          setAppForm({ machine_id: '', app_name: '', description: '' });
-          fetchMachineApps(filterMachineId);
-        } else {
-          alert(json.msg || '添加失败');
-        }
+        setShowAddAppModal(false);
+        setAppForm({ machine_id: '', app_name: '', description: '' });
+        fetchMachineApps(filterMachineId);
       } catch (e) {
         console.error('添加应用绑定失败:', e);
-        alert('添加失败');
+        alert(getErrorMessage(e, '添加失败'));
       }
     };
 
     // 切换启用状态
     const handleToggleAppEnabled = async (app: MachineApp) => {
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/machine-apps/${app.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-          },
-          body: JSON.stringify({
-            enabled: !app.enabled
-          })
+        await updateMachineApp(app.id, {
+          enabled: !app.enabled,
         });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          fetchMachineApps(filterMachineId);
-        } else {
-          alert(json.msg || '更新失败');
-        }
+        fetchMachineApps(filterMachineId);
       } catch (e) {
         console.error('更新应用绑定失败:', e);
-        alert('更新失败');
+        alert(getErrorMessage(e, '更新失败'));
       }
     };
 
@@ -477,23 +394,13 @@
       if (!currentApp) return;
 
       try {
-        const token = localStorage.getItem('token');
-        const res = await fetch(`/api/machine-apps/${currentApp.id}`, {
-          method: 'DELETE',
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        });
-        const json = await res.json();
-
-        if (json.code === 0) {
-          setShowDeleteAppConfirm(false);
-          setCurrentApp(null);
-          fetchMachineApps(filterMachineId);
-        } else {
-          alert(json.msg || '删除失败');
-        }
+        await deleteMachineApp(currentApp.id);
+        setShowDeleteAppConfirm(false);
+        setCurrentApp(null);
+        fetchMachineApps(filterMachineId);
       } catch (e) {
         console.error('删除应用绑定失败:', e);
-        alert('删除失败');
+        alert(getErrorMessage(e, '删除失败'));
       }
     };
 

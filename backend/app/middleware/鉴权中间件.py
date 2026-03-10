@@ -23,12 +23,12 @@ from app.配置 import 密钥, 令牌算法
 
 def _是机器互调免鉴权路径(路径: str, 方法: str) -> bool:
     if 方法 == "POST" and 路径 in {
-        "/api/machines",
-        "/api/machine/heartbeat",
         "/api/task-dispatches/echo-test",
     }:
         return True
     if 方法 == "PUT" and 路径.startswith("/api/machines/") and 路径.endswith("/status"):
+        return True
+    if 方法 == "PUT" and 路径.startswith("/api/workers/") and 路径.endswith("/status"):
         return True
     if 方法 == "GET" and 路径.startswith("/api/task-dispatches/") and 路径.endswith("/status"):
         return True

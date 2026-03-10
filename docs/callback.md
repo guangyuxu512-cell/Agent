@@ -36,22 +36,14 @@
 ```json
 {
   "machine_id": "machine-a",
-  "hostname": "DESKTOP-001",
-  "ip": "192.168.0.23",
-  "queue_name": "worker.machine-a",
-  "status": "online",
-  "tags": ["windows", "shadowbot"]
+  "machine_name": "DESKTOP-001"
 }
 ```
 
 - 字段说明：
   - `machine_id`：机器唯一标识，必填。
-  - `hostname`：主机名，必填。
-  - `ip`：机器 IP，必填。
-  - `queue_name`：可选；不传时后端回退为 `worker.{machine_id}`。
-  - `status`：可选，允许值实际规范为 `online/offline/busy`，非法值会回退到 `online`。
-  - `tags`：可选字符串数组。
-- 返回：统一响应格式，成功时 `data` 为 Worker 当前快照，包含 `machine_id`、`hostname`、`ip`、`queue_name`、`status`、`last_heartbeat`、`tags`。
+  - `machine_name`：Worker 机器展示名，必填。
+- 返回：统一响应格式，成功时 `data` 为 Worker 当前快照，包含 `machine_id`、`machine_name`、`queue_name`、`status`、`last_heartbeat`。
 
 ### 2.2 心跳接口
 
@@ -62,16 +54,14 @@
 ```json
 {
   "machine_id": "machine-a",
-  "status": "online",
-  "ip": "192.168.0.23",
-  "tags": ["windows", "shadowbot"]
+  "shadowbot_running": true
 }
 ```
 
 - 说明：
   - 心跳依赖“先注册后心跳”；未注册机器会返回错误。
-  - `status` 同样规范为 `online/offline/busy`。
-  - `ip`、`tags` 可选；传入时会同步更新数据库中的 Worker 信息。
+  - 该接口主要用于刷新 `last_heartbeat`。
+  - 当前运行状态以上报 `PUT /api/workers/{machine_id}/status` 为准。
 - 成功返回示例：
 
 ```json
@@ -92,10 +82,26 @@
 ### 2.4 队列与状态约定
 
 - 默认队列命名：`worker.{machine_id}`
-- Worker 状态：`online`、`offline`、`busy`
+- Worker 状态：`idle`、`running`、`offline`、`error`
 - 注意区分：
   - `workers`：Celery Worker 维度，描述消费端状态。
   - `machines`：影刀机器维度，描述自动化设备状态，状态值是 `idle/running/offline/error`。
+
+### 2.5 Worker 状态回调
+
+- 路径：`PUT /api/workers/{machine_id}/status`
+- 鉴权：Header `X-RPA-KEY`
+- 请求体模型：
+
+```json
+{
+  "status": "running"
+}
+```
+
+- 说明：
+  - 用于外部 Worker 脚本主动上报运行状态。
+  - 允许值：`idle`、`running`、`offline`、`error`。
 
 ## 3. Celery 任务派发链路
 
@@ -199,10 +205,10 @@
   - 更新 `machines` 表状态与心跳时间
   - 当机器从 `running` 回到 `idle` 时，后端会尝试继续消费 `task_queue`
 
-### 4.3 机器心跳
+### 4.3 机器注册
 
 - 路径：`POST /api/machines`
-- 鉴权：Header `X-RPA-KEY`
+- 鉴权：JWT Bearer
 - 请求体模型：
 
 ```json
@@ -213,13 +219,13 @@
 ```
 
 - 说明：
-  - 该接口用于 Worker / 机器侧自注册。
+  - 该接口用于前端手动添加影刀机器。
   - 同一路径的 `GET /api/machines`、`PUT /api/machines/{machine_id}`、`DELETE /api/machines/{machine_id}` 仍用于前端管理，继续走 JWT。
 
 ### 4.4 机器心跳
 
 - 路径：`POST /api/machine/heartbeat`
-- 鉴权：Header `X-RPA-KEY`
+- 鉴权：JWT Bearer
 - 请求体模型：
 
 ```json
@@ -290,7 +296,7 @@ data: {"type":"heartbeat","time":"2026-03-10T10:30:00+08:00"}
 
 ## 7. 鉴权与安全约束
 
-- Worker 注册 / 心跳、机器注册 / 心跳 / 状态回调、影刀日志推流都依赖 Header `X-RPA-KEY`。
+- Worker 注册 / 心跳 / 状态回调、影刀状态回调、影刀日志推流都依赖 Header `X-RPA-KEY`。
 - 普通 Web API 主要使用 JWT Bearer。
 - 日志 SSE 不走 Header 鉴权，而是走短期 token 查询参数。
 - 不要把真实 `RPA_PUSH_KEY`、`RPA_KEY`、生产地址写进示例文档或提交到仓库。

@@ -5,7 +5,7 @@ const navItems = [
   { path: '/', name: 'Agent聊天', icon: MessageSquare },
   { path: '/agent', name: 'Agent智能体', icon: Bot },
   { path: '/tools', name: '工具管理', icon: Wrench },
-  { path: '/workers', name: '机器管理', icon: Server },
+  { path: '/workers', name: '工人列表', icon: Server },
   { path: '/logs', name: '自动化日志', icon: FileText },
   { path: '/feishu', name: '飞书表管理', icon: Table },
   { path: '/config', name: '基础配置', icon: Settings },

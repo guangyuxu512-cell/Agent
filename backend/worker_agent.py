@@ -59,11 +59,7 @@ def 请求头() -> dict:
 def 注册机器(client: httpx.Client):
     payload = {
         "machine_id": MACHINE_ID,
-        "hostname": 获取本机主机名(),
-        "ip": 获取本机IP(),
-        "queue_name": QUEUE_NAME,
-        "status": "online",
-        "tags": ["celery", "worker-agent"],
+        "machine_name": 获取本机主机名(),
     }
     resp = client.post(f"{SERVER_URL}/api/workers/register", json=payload, headers=请求头())
     resp.raise_for_status()
@@ -79,9 +75,7 @@ def 心跳循环():
             try:
                 payload = {
                     "machine_id": MACHINE_ID,
-                    "status": "online",
-                    "ip": 获取本机IP(),
-                    "tags": ["celery", "worker-agent"],
+                    "shadowbot_running": True,
                 }
                 resp = client.post(f"{SERVER_URL}/api/workers/heartbeat", json=payload, headers=请求头())
                 resp.raise_for_status()

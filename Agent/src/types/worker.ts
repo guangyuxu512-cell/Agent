@@ -1,12 +1,12 @@
-export type WorkerStatus = 'online' | 'offline' | 'busy';
+export type WorkerStatus = 'idle' | 'running' | 'offline' | 'error';
 
 export interface Worker {
   id: number;
   machine_id: string;
-  hostname: string;
-  ip: string;
+  machine_name: string;
   queue_name: string;
   status: WorkerStatus;
   last_heartbeat: string | null;
-  tags: string[];
+  created_at?: string;
+  updated_at?: string;
 }

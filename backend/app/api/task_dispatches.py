@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.配置 import RPA密钥
 from app.db.数据库 import 获取数据库
 from app.db.模型 import 任务派发模型
+from app.db.worker模型 import Worker模型
 from app.schemas import 统一响应
 from app.services.dispatch_records import 任务派发转字典, 查询任务执行状态
 from app.services.task_dispatcher import 派发Echo测试
@@ -92,6 +93,7 @@ async def 获取任务执行状态详情(
 @任务派发路由.post("/echo-test", response_model=统一响应)
 async def 创建Echo测试任务(
     请求体: Echo测试请求,
+    数据库: Session = Depends(获取数据库),
     x_rpa_key: Optional[str] = Header(None, alias="X-RPA-KEY"),
 ):
     鉴权失败 = _校验X密钥(x_rpa_key, "任务派发")
@@ -101,6 +103,10 @@ async def 创建Echo测试任务(
     machine_id = 请求体.machine_id.strip()
     if not machine_id:
         return 统一响应(code=1, msg="machine_id 不能为空")
+
+    worker = 数据库.query(Worker模型).filter(Worker模型.机器码 == machine_id).first()
+    if not worker:
+        return 统一响应(code=1, msg=f"Worker '{machine_id}' 未注册")
 
     logger.info("[任务派发] 收到 echo_test 请求 machine_id=%s", machine_id)
     派发记录 = 派发Echo测试(machine_id, 请求体.message, requested_by="api")
