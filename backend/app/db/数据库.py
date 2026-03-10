@@ -1,7 +1,7 @@
 import os
 import logging
 
-from sqlalchemy import create_engine, text, event
+from sqlalchemy import create_engine, text, event, inspect
 from sqlalchemy.orm import sessionmaker, Session
 from passlib.context import CryptContext
 
@@ -117,7 +117,7 @@ def 追踪机器状态变更(session, flush_context, instances):
     for obj in session.dirty:
         if isinstance(obj, 机器模型):
             # 检查状态是否被修改
-            状态历史 = session.get_history(obj, '状态')
+            状态历史 = inspect(obj).attrs.状态.history
             if 状态历史.has_changes():
                 旧状态 = 状态历史.deleted[0] if 状态历史.deleted else None
                 新状态 = obj.状态

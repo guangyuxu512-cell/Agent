@@ -102,6 +102,7 @@
 ### 3.1 Echo 测试派发
 
 - 路径：`POST /api/task-dispatches/echo-test`
+- 鉴权：Header `X-RPA-KEY`
 - 请求体模型：
 
 ```json
@@ -117,6 +118,7 @@
   - 执行结果会写入 `task_dispatches`。
 - 状态查询：
   - 路径：`GET /api/task-dispatches/{task_id}/status`
+  - 鉴权：Header `X-RPA-KEY`
   - 返回任务当前 `status`，以及 `result`、`error`、`queue_name`、`submitted_at` 等派发信息。
 
 ### 3.2 定时任务派发链路
@@ -199,7 +201,25 @@
 
 ### 4.3 机器心跳
 
+- 路径：`POST /api/machines`
+- 鉴权：Header `X-RPA-KEY`
+- 请求体模型：
+
+```json
+{
+  "machine_id": "machine-a",
+  "machine_name": "机器A"
+}
+```
+
+- 说明：
+  - 该接口用于 Worker / 机器侧自注册。
+  - 同一路径的 `GET /api/machines`、`PUT /api/machines/{machine_id}`、`DELETE /api/machines/{machine_id}` 仍用于前端管理，继续走 JWT。
+
+### 4.4 机器心跳
+
 - 路径：`POST /api/machine/heartbeat`
+- 鉴权：Header `X-RPA-KEY`
 - 请求体模型：
 
 ```json
@@ -270,7 +290,7 @@ data: {"type":"heartbeat","time":"2026-03-10T10:30:00+08:00"}
 
 ## 7. 鉴权与安全约束
 
-- Worker 注册 / 心跳、影刀日志推流、影刀状态回调都依赖 Header `X-RPA-KEY`。
+- Worker 注册 / 心跳、机器注册 / 心跳 / 状态回调、影刀日志推流都依赖 Header `X-RPA-KEY`。
 - 普通 Web API 主要使用 JWT Bearer。
 - 日志 SSE 不走 Header 鉴权，而是走短期 token 查询参数。
 - 不要把真实 `RPA_PUSH_KEY`、`RPA_KEY`、生产地址写进示例文档或提交到仓库。

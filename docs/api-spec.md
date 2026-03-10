@@ -189,6 +189,11 @@
 - `/api/auth/login`
 - `/api/health`
 - `/api/logs/push`
+- `/api/machines` `POST`
+- `/api/machine/heartbeat`
+- `/api/machines/{machine_id}/status`
+- `/api/task-dispatches/echo-test`
+- `/api/task-dispatches/{task_id}/status`
 - `/api/logs/stream`
 - `/api/workers/register`
 - `/api/workers/heartbeat`
@@ -201,9 +206,13 @@
 - 用于外部影刀/Worker 侧回调
 - 典型接口：
   - `POST /api/logs/push`
+  - `POST /api/machines`
+  - `POST /api/machine/heartbeat`
+  - `PUT /api/machines/{machine_id}/status`
+  - `POST /api/task-dispatches/echo-test`
+  - `GET /api/task-dispatches/{task_id}/status`
   - `POST /api/workers/register`
   - `POST /api/workers/heartbeat`
-  - `PUT /api/machines/{machine_id}/status`
 
 ### 6.4 SSE Token
 
