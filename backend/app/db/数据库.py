@@ -83,6 +83,9 @@ def _自动迁移(db):
     """检查并添加缺失的列（安全幂等）"""
     迁移列表 = [
         ("conversations", "source", "VARCHAR(20) DEFAULT 'web'"),
+        ("workers", "hostname", "VARCHAR(200) DEFAULT '-'"),
+        ("workers", "ip", "VARCHAR(64) DEFAULT '-'"),
+        ("workers", "machine_name", "VARCHAR(200) DEFAULT ''"),
     ]
     for 表名, 列名, 列定义 in 迁移列表:
         try:
@@ -94,6 +97,73 @@ def _自动迁移(db):
                 logger.info("[迁移] 已添加列 %s.%s", 表名, 列名)
             except Exception as e:
                 logger.error("[迁移] 添加列 %s.%s 失败: %s", 表名, 列名, e)
+
+    try:
+        db.execute(
+            text(
+                "UPDATE workers "
+                "SET machine_name = COALESCE(NULLIF(machine_name, ''), NULLIF(NULLIF(hostname, ''), '-'), machine_id)"
+            )
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[迁移] 回填 workers.machine_name 失败: %s", e)
+
+    try:
+        db.execute(text("UPDATE workers SET hostname = COALESCE(NULLIF(hostname, ''), '-')"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[迁移] 回填 workers.hostname 失败: %s", e)
+
+    try:
+        db.execute(text("UPDATE workers SET ip = COALESCE(NULLIF(ip, ''), '-')"))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[迁移] 回填 workers.ip 失败: %s", e)
+
+    try:
+        db.execute(
+            text(
+                """
+                CREATE TRIGGER IF NOT EXISTS workers_insert_defaults
+                BEFORE INSERT ON workers
+                FOR EACH ROW
+                WHEN NEW.hostname IS NULL OR NEW.ip IS NULL
+                BEGIN
+                    INSERT INTO workers (
+                        machine_id,
+                        machine_name,
+                        hostname,
+                        ip,
+                        queue_name,
+                        status,
+                        last_heartbeat,
+                        created_at,
+                        updated_at
+                    )
+                    VALUES (
+                        NEW.machine_id,
+                        NEW.machine_name,
+                        COALESCE(NEW.hostname, '-'),
+                        COALESCE(NEW.ip, '-'),
+                        NEW.queue_name,
+                        NEW.status,
+                        NEW.last_heartbeat,
+                        COALESCE(NEW.created_at, CURRENT_TIMESTAMP),
+                        COALESCE(NEW.updated_at, CURRENT_TIMESTAMP)
+                    );
+                    SELECT RAISE(IGNORE);
+                END;
+                """
+            )
+        )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.warning("[迁移] 创建 workers 插入兜底触发器失败: %s", e)
 
     if 数据库地址.startswith("sqlite"):
         try:
