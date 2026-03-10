@@ -115,6 +115,9 @@
   - 用于验证指定机器的 Celery 队列是否可达。
   - 后端会把任务派发到 `worker.{machine_id}` 队列。
   - 执行结果会写入 `task_dispatches`。
+- 状态查询：
+  - 路径：`GET /api/task-dispatches/{task_id}/status`
+  - 返回任务当前 `status`，以及 `result`、`error`、`queue_name`、`submitted_at` 等派发信息。
 
 ### 3.2 定时任务派发链路
 

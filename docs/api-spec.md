@@ -55,6 +55,7 @@
 - `DELETE /api/schedules/{schedule_id}`
 - `GET /api/task-dispatches`
 - `GET /api/task-dispatches/{dispatch_id}`
+- `GET /api/task-dispatches/{task_id}/status`
 - `POST /api/task-dispatches/echo-test`
 
 ### 1.6 Worker 与机器管理
@@ -95,6 +96,7 @@
   - `/api/chat`
   - `/api/logs/sse-token`
   - `/api/task-dispatches/echo-test`
+  - `/api/task-dispatches/{task_id}/status`
 - 路径参数统一英文命名，如 `tool_id`、`schedule_id`、`conversation_id`
 
 ## 3. 统一响应格式
