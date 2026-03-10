@@ -175,6 +175,21 @@ async def 更新Worker状态(
     return 统一响应(data=Worker转字典(worker), msg="状态更新成功")
 
 
+@Worker管理路由.delete("/{machine_id}", response_model=统一响应)
+async def 删除Worker(
+    machine_id: str,
+    数据库: Session = Depends(获取数据库),
+):
+    worker = 数据库.query(Worker模型).filter(Worker模型.机器码 == machine_id.strip()).first()
+    if not worker:
+        return 统一响应(code=1, msg=f"Worker '{machine_id}' 不存在")
+
+    数据库.delete(worker)
+    数据库.commit()
+    logger.info("[Worker] 删除成功 machine_id=%s", machine_id)
+    return 统一响应(msg="Worker 已删除")
+
+
 @Worker管理路由.get("", response_model=统一响应)
 async def 获取Workers(
     status: Optional[str] = Query(None),
