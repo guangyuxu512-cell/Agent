@@ -4,6 +4,8 @@ export interface Worker {
   id: number;
   machine_id: string;
   machine_name: string;
+  hostname?: string;
+  ip?: string;
   queue_name: string;
   status: WorkerStatus;
   last_heartbeat: string | null;

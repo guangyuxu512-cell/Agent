@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Cpu, RefreshCw, Server } from 'lucide-react';
-import { getWorkers } from '../api/workers';
+import { deleteWorker, getWorkers } from '../api/workers';
 import { Worker, WorkerStatus } from '../types/worker';
 
 const statusOptions: Array<{ value: '' | WorkerStatus; label: string }> = [
@@ -37,21 +37,44 @@ export default function Workers() {
   const [status, setStatus] = useState<'' | WorkerStatus>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [currentWorker, setCurrentWorker] = useState<Worker | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const getErrorMessage = (err: unknown, fallback: string) => {
+    if (err instanceof Error && err.message) {
+      return err.message;
+    }
+    return fallback;
+  };
 
   const fetchWorkers = async () => {
     setLoading(true);
     setError('');
     try {
-      const res = await getWorkers(status || undefined);
-      if (res.code !== 0) {
-        setError(res.msg || '获取 Worker 列表失败');
-        return;
-      }
-      setWorkers(res.data?.list || []);
-    } catch (err: any) {
-      setError(err?.message || '获取 Worker 列表失败');
+      const data = await getWorkers(status || undefined);
+      setWorkers(data.list || []);
+    } catch (err) {
+      setError(getErrorMessage(err, '获取 Worker 列表失败'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteWorker = async () => {
+    if (!currentWorker) return;
+
+    setDeleting(true);
+    setError('');
+    try {
+      await deleteWorker(currentWorker.machine_id);
+      setShowDeleteConfirm(false);
+      setCurrentWorker(null);
+      await fetchWorkers();
+    } catch (err) {
+      setError(getErrorMessage(err, '删除 Worker 失败'));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -150,12 +173,13 @@ export default function Workers() {
                 <th className="px-4 py-3 font-medium">状态</th>
                 <th className="px-4 py-3 font-medium">最后心跳</th>
                 <th className="px-4 py-3 font-medium">标签</th>
+                <th className="px-4 py-3 font-medium">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {workers.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-slate-400">
                     {loading ? '正在加载 Worker 列表…' : '暂无 Worker 数据'}
                   </td>
                 </tr>
@@ -168,8 +192,8 @@ export default function Workers() {
                         {worker.machine_id}
                       </div>
                     </td>
-                    <td className="px-4 py-3 text-slate-700">{worker.machine_name || '-'}</td>
-                    <td className="px-4 py-3 text-slate-700">-</td>
+                    <td className="px-4 py-3 text-slate-700">{worker.hostname || worker.machine_name || '-'}</td>
+                    <td className="px-4 py-3 text-slate-700">{worker.ip || '-'}</td>
                     <td className="px-4 py-3 text-slate-700">{worker.queue_name || `worker.${worker.machine_id}`}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${statusStyles[worker.status]}`}>
@@ -178,6 +202,17 @@ export default function Workers() {
                     </td>
                     <td className="px-4 py-3 text-slate-700">{formatTime(worker.last_heartbeat)}</td>
                     <td className="px-4 py-3 text-slate-700">-</td>
+                    <td className="px-4 py-3 text-sm font-medium">
+                      <button
+                        onClick={() => {
+                          setCurrentWorker(worker);
+                          setShowDeleteConfirm(true);
+                        }}
+                        className="text-red-600 transition-colors hover:text-red-800"
+                      >
+                        删除
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -185,6 +220,35 @@ export default function Workers() {
           </table>
         </div>
       </div>
+
+      {showDeleteConfirm && currentWorker ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="mb-4 text-xl font-bold text-slate-800">确认删除</h3>
+            <p className="mb-6 text-slate-600">
+              确定要删除 Worker <span className="font-semibold text-slate-900">{currentWorker.machine_name || currentWorker.machine_id}</span> 吗？
+              <br />
+              <span className="text-sm text-red-600">此操作不可撤销。</span>
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 rounded-lg border border-slate-300 px-4 py-2 text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleDeleteWorker}
+                disabled={deleting}
+                className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-white transition-colors hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deleting ? '删除中...' : '确定删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

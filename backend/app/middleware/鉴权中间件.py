@@ -20,6 +20,23 @@ from app.配置 import 密钥, 令牌算法
     "/redoc",
 ]
 
+按方法免鉴权前缀 = {
+    "POST": ("/api/workers",),
+    "PUT": ("/api/workers",),
+}
+
+
+def _命中前缀路径(路径: str, 前缀: str) -> bool:
+    return 路径 == 前缀 or 路径.startswith(f"{前缀}/")
+
+
+def _是按方法前缀免鉴权路径(路径: str, 方法: str) -> bool:
+    return any(_命中前缀路径(路径, 前缀) for 前缀 in 按方法免鉴权前缀.get(方法, ()))
+
+
+def _是路由自鉴权路径(路径: str, 方法: str) -> bool:
+    return 方法 == "POST" and 路径 == "/api/machines"
+
 
 def _是机器互调免鉴权路径(路径: str, 方法: str) -> bool:
     if 方法 == "POST" and 路径 in {
@@ -52,6 +69,12 @@ class 鉴权中间件(BaseHTTPMiddleware):
         for 免鉴权 in 免鉴权路径:
             if 路径.startswith(免鉴权):
                 return await call_next(request)
+
+        if _是路由自鉴权路径(路径, request.method):
+            return await call_next(request)
+
+        if _是按方法前缀免鉴权路径(路径, request.method):
+            return await call_next(request)
 
         if _是机器互调免鉴权路径(路径, request.method):
             return await call_next(request)

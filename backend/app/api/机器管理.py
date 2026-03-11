@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from fastapi.responses import JSONResponse
+from jose import jwt, JWTError
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -14,7 +15,7 @@ import logging
 from app.db.数据库 import 获取数据库, 会话工厂
 from app.db.模型 import 机器模型, 机器应用模型, 任务队列模型
 from app.schemas import 统一响应
-from app.配置 import RPA密钥
+from app.配置 import RPA密钥, 密钥, 令牌算法
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,30 @@ def _校验X密钥(x_rpa_key: Optional[str], 操作: str):
     return None
 
 
+def _校验JWT令牌(authorization: Optional[str], 操作: str) -> bool:
+    if not authorization or not authorization.startswith("Bearer "):
+        return False
+
+    令牌 = authorization[7:]
+    try:
+        载荷 = jwt.decode(令牌, 密钥, algorithms=[令牌算法])
+        logger.info("%s鉴权通过：使用 Bearer Token，用户=%s", 操作, 载荷.get("sub", "") or "unknown")
+        return True
+    except JWTError:
+        logger.warning("%s鉴权失败：Bearer Token 无效", 操作)
+        return False
+
+
+def _校验添加机器鉴权(authorization: Optional[str], x_rpa_key: Optional[str]):
+    if _校验JWT令牌(authorization, "添加机器"):
+        return None
+
+    鉴权失败 = _校验X密钥(x_rpa_key, "添加机器")
+    if not 鉴权失败:
+        logger.info("添加机器鉴权通过：使用 X-RPA-KEY")
+    return 鉴权失败
+
+
 def 机器转字典(机器: 机器模型) -> dict:
     """将机器 ORM 对象转为字典"""
     return {
@@ -111,8 +136,14 @@ async def 获取机器列表(数据库: Session = Depends(获取数据库)):
 async def 添加机器(
     请求体: 添加机器请求,
     数据库: Session = Depends(获取数据库),
+    authorization: Optional[str] = Header(None, alias="Authorization"),
+    x_rpa_key: Optional[str] = Header(None, alias="X-RPA-KEY"),
 ):
     """添加新机器"""
+    鉴权失败 = _校验添加机器鉴权(authorization, x_rpa_key)
+    if 鉴权失败:
+        return 鉴权失败
+
     # 检查 machine_id 是否已存在
     已存在 = 数据库.query(机器模型).filter(机器模型.机器码 == 请求体.machine_id).first()
     if 已存在:
@@ -126,6 +157,7 @@ async def 添加机器(
     数据库.add(新机器)
     数据库.commit()
     数据库.refresh(新机器)
+    logger.info("添加机器成功：machine_id=%s, machine_name=%s", 请求体.machine_id, 请求体.machine_name)
     return 统一响应(data=机器转字典(新机器), msg="机器添加成功")
 
 
