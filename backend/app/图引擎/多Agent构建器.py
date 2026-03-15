@@ -2,18 +2,50 @@
 # Step 3：根据编排配置构建多 Agent 协作图
 
 import logging
+import re
 from langgraph_supervisor import create_supervisor
 from langgraph_swarm import create_swarm
+from app.配置 import SUPERVISOR_API_KEY, SUPERVISOR_API_URL, SUPERVISOR_MODEL
 from app.图引擎.构建器 import 获取LLM模型, 构建Agent图
 
 logger = logging.getLogger(__name__)
 
 
-def 构建子Agent(agent配置: dict, 工具记录列表: list = None) -> object:
+def 安全Agent名称(原始名称: str, 索引: int) -> str:
+    """将 Agent 名称转换为适合 transfer_to 工具名的英文标识符。"""
+    清洗后名称 = re.sub(r"[^a-zA-Z0-9_]", "", 原始名称 or "")
+    if not 清洗后名称:
+        return f"agent_{索引}"
+    if 清洗后名称[0].isdigit():
+        清洗后名称 = f"agent_{清洗后名称}"
+    return 清洗后名称
+
+
+def 构建子Agent(agent配置: dict, 工具记录列表: list = None, 安全名称: str = None) -> object:
     """构建单个子 Agent（用于多 Agent 编排中的节点）"""
     子图 = 构建Agent图(agent配置, 工具记录列表=工具记录列表)
-    子图.name = agent配置.get("name", "agent")
+    子图.name = 安全名称 or agent配置.get("name", "agent")
     return 子图
+
+
+def 获取Supervisor模型(入口配置: dict) -> object:
+    """获取 Supervisor 使用的 LLM 模型。"""
+    if SUPERVISOR_API_KEY and SUPERVISOR_API_URL and SUPERVISOR_MODEL:
+        logger.info("[Supervisor] 使用独立配置的 Supervisor 模型: %s", SUPERVISOR_MODEL)
+        supervisor配置 = {
+            "llm_api_key": SUPERVISOR_API_KEY,
+            "llm_api_url": SUPERVISOR_API_URL,
+            "llm_model": SUPERVISOR_MODEL,
+            "model": SUPERVISOR_MODEL,
+            "temperature": 入口配置.get("temperature", 0.7),
+        }
+        return 获取LLM模型(supervisor配置)
+
+    logger.info(
+        "[Supervisor] 未配置独立模型，使用入口 Agent 的模型: %s",
+        入口配置.get("llm_model") or 入口配置.get("model", "unknown"),
+    )
+    return 获取LLM模型(入口配置)
 
 
 def 构建多Agent图(
@@ -40,28 +72,56 @@ def 构建多Agent图(
 
     # 构建所有子 Agent
     子agents = []
-    有效agents配置列表 = []
+    有效agents信息列表 = []
+    名称映射 = {}
     入口agent名称 = None
-    for agent配置 in agents配置列表:
+    for 索引, agent配置 in enumerate(agents配置列表):
         agent_id = agent配置.get("id", "")
+        原始名称 = agent配置.get("name", "") or f"agent_{索引}"
         try:
             api_key = (agent配置.get("llm_api_key") or "").strip()
             base_url = (agent配置.get("llm_api_url") or "").strip()
             if not api_key or not base_url:
-                logger.warning("跳过未配置LLM的Agent: %s", agent配置.get("name"))
+                logger.warning("跳过未配置LLM的Agent: 原始名称=%s", 原始名称)
                 continue
 
+            安全名称 = 安全Agent名称(原始名称, 索引)
+            if 安全名称 in 名称映射:
+                安全名称 = f"{安全名称}_{索引}"
+
             工具记录 = 工具记录映射.get(agent_id, [])
-            子agent = 构建子Agent(agent配置, 工具记录)
+            try:
+                子agent = 构建子Agent(agent配置, 工具记录, 安全名称=安全名称)
+            except TypeError as e:
+                if "安全名称" not in str(e):
+                    raise
+                子agent = 构建子Agent(agent配置, 工具记录)
+
+            实际名称 = getattr(子agent, "name", 安全名称) or 安全名称
             子agents.append(子agent)
-            有效agents配置列表.append(agent配置)
+            有效agents信息列表.append({
+                "配置": agent配置,
+                "安全名称": 安全名称,
+                "实际名称": 实际名称,
+                "原始名称": 原始名称,
+            })
+            名称映射[实际名称] = 原始名称
+
+            logger.info(
+                "构建子Agent成功: 安全名称=%s, 实际名称=%s, 原始名称=%s, agent_id=%s",
+                安全名称,
+                实际名称,
+                原始名称,
+                agent_id,
+            )
 
             if agent_id == 入口agent_id:
-                入口agent名称 = agent配置.get("name", "agent")
+                入口agent名称 = 实际名称
         except Exception as e:
             logger.error(
-                "构建子Agent失败，跳过: %s, error=%s",
-                agent配置.get("name"),
+                "构建子Agent失败，跳过: 安全名称=%s, 原始名称=%s, error=%s",
+                安全Agent名称(原始名称, 索引),
+                原始名称,
                 e,
             )
             continue
@@ -83,26 +143,28 @@ def 构建多Agent图(
         # Supervisor / Hierarchical 模式：主管调度
         # 用入口 Agent 的 LLM 作为 supervisor 的模型
         入口配置 = None
-        for a in 有效agents配置列表:
-            if a.get("id") == 入口agent_id:
-                入口配置 = a
+        for agent信息 in 有效agents信息列表:
+            if agent信息["配置"].get("id") == 入口agent_id:
+                入口配置 = agent信息["配置"]
                 break
         if not 入口配置:
-            入口配置 = 有效agents配置列表[0]
+            入口配置 = 有效agents信息列表[0]["配置"]
 
-        supervisor模型 = 获取LLM模型(入口配置)
+        supervisor模型 = 获取Supervisor模型(入口配置)
 
         # 构建 Supervisor 的 prompt，明确指示使用 tool calling 进行路由
         agent_names = [agent.name for agent in 子agents]
         agent_descriptions = []
-        for i, agent配置 in enumerate(有效agents配置列表):
-            name = agent配置.get("name", f"agent_{i}")
+        for agent信息 in 有效agents信息列表:
+            agent配置 = agent信息["配置"]
+            安全名称 = agent信息["实际名称"]
+            原始名称 = agent信息["原始名称"]
             role = agent配置.get("role", "")
             desc = agent配置.get("description", "")
             if role or desc:
-                agent_descriptions.append(f"- {name}: {role or desc}")
+                agent_descriptions.append(f"- {安全名称}（{原始名称}）: {role or desc}")
             else:
-                agent_descriptions.append(f"- {name}")
+                agent_descriptions.append(f"- {安全名称}（{原始名称}）")
 
         if len(子agents) >= 2:
             示例文本 = (
@@ -114,6 +176,11 @@ def 构建多Agent图(
             示例文本 = f"示例：\n- 调用 transfer_to_{子agents[0].name} 工具"
         else:
             示例文本 = ""
+
+        名称映射说明 = "\n".join(
+            f"- 当你需要委派给「{原始名称}」时，调用 transfer_to_{安全名称}"
+            for 安全名称, 原始名称 in 名称映射.items()
+        )
 
         prompt = f"""你是一个任务调度主管。你的职责是分析用户请求，并将任务委派给最合适的智能体处理。
 
@@ -133,8 +200,10 @@ def 构建多Agent图(
         路由规则 = 编排配置.get("routingRules", "").strip()
         if 路由规则:
             prompt += f"\n\n路由规则：\n{路由规则}"
+        prompt += f"\n\n智能体名称映射：\n{名称映射说明}"
 
         logger.info(f"[Supervisor] 可用智能体: {agent_names}")
+        logger.info(f"[Supervisor] 名称映射: {名称映射}")
         logger.info(f"[Supervisor] Prompt 前100字: {prompt[:100]}...")
 
         # 创建 Supervisor 图

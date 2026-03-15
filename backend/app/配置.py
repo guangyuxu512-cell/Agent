@@ -70,3 +70,9 @@ class 环境变量:
     RAGFLOW_BASE_URL: str = os.getenv("RAGFLOW_BASE_URL", "http://localhost:9380")
     RAGFLOW_API_KEY: str = os.getenv("RAGFLOW_API_KEY", "")
     RAGFLOW_DATASET_IDS: str = os.getenv("RAGFLOW_DATASET_IDS", "")  # 多个用逗号分隔
+
+
+# Supervisor 独立模型配置（可选，不配则回退到入口 Agent 的模型）
+SUPERVISOR_API_KEY = os.getenv("SUPERVISOR_API_KEY", "")
+SUPERVISOR_API_URL = os.getenv("SUPERVISOR_API_URL", "")
+SUPERVISOR_MODEL = os.getenv("SUPERVISOR_MODEL", "")
