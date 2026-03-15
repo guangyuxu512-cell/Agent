@@ -1,36 +1,19 @@
 # app/图引擎/多Agent构建器.py
 # Step 3：根据编排配置构建多 Agent 协作图
 
-import json
 import logging
-from langgraph.prebuilt import create_react_agent
 from langgraph_supervisor import create_supervisor
 from langgraph_swarm import create_swarm
-from app.图引擎.构建器 import 获取LLM模型, 构建系统提示
+from app.图引擎.构建器 import 获取LLM模型, 构建Agent图
 
 logger = logging.getLogger(__name__)
 
 
 def 构建子Agent(agent配置: dict, 工具记录列表: list = None) -> object:
     """构建单个子 Agent（用于多 Agent 编排中的节点）"""
-    模型 = 获取LLM模型(agent配置)
-
-    工具列表 = []
-    if 工具记录列表:
-        from app.图引擎.工具加载器 import 加载工具列表
-        工具列表 = 加载工具列表(工具记录列表)
-
-    系统提示 = 构建系统提示(agent配置, 工具记录列表=工具记录列表)
-
-    构建参数 = {
-        "model": 模型,
-        "tools": 工具列表,
-        "name": agent配置.get("name", "agent"),
-    }
-    if 系统提示:
-        构建参数["prompt"] = 系统提示
-
-    return create_react_agent(**构建参数)
+    子图 = 构建Agent图(agent配置, 工具记录列表=工具记录列表)
+    子图.name = agent配置.get("name", "agent")
+    return 子图
 
 
 def 构建多Agent图(
@@ -57,14 +40,31 @@ def 构建多Agent图(
 
     # 构建所有子 Agent
     子agents = []
+    有效agents配置列表 = []
     入口agent名称 = None
     for agent配置 in agents配置列表:
         agent_id = agent配置.get("id", "")
-        工具记录 = 工具记录映射.get(agent_id, [])
-        子agent = 构建子Agent(agent配置, 工具记录)
-        子agents.append(子agent)
-        if agent_id == 入口agent_id:
-            入口agent名称 = agent配置.get("name", "agent")
+        try:
+            api_key = (agent配置.get("llm_api_key") or "").strip()
+            base_url = (agent配置.get("llm_api_url") or "").strip()
+            if not api_key or not base_url:
+                logger.warning("跳过未配置LLM的Agent: %s", agent配置.get("name"))
+                continue
+
+            工具记录 = 工具记录映射.get(agent_id, [])
+            子agent = 构建子Agent(agent配置, 工具记录)
+            子agents.append(子agent)
+            有效agents配置列表.append(agent配置)
+
+            if agent_id == 入口agent_id:
+                入口agent名称 = agent配置.get("name", "agent")
+        except Exception as e:
+            logger.error(
+                "构建子Agent失败，跳过: %s, error=%s",
+                agent配置.get("name"),
+                e,
+            )
+            continue
 
     if not 子agents:
         raise ValueError("没有可用的子 Agent")
@@ -83,19 +83,19 @@ def 构建多Agent图(
         # Supervisor / Hierarchical 模式：主管调度
         # 用入口 Agent 的 LLM 作为 supervisor 的模型
         入口配置 = None
-        for a in agents配置列表:
+        for a in 有效agents配置列表:
             if a.get("id") == 入口agent_id:
                 入口配置 = a
                 break
         if not 入口配置:
-            入口配置 = agents配置列表[0]
+            入口配置 = 有效agents配置列表[0]
 
         supervisor模型 = 获取LLM模型(入口配置)
 
         # 构建 Supervisor 的 prompt，明确指示使用 tool calling 进行路由
         agent_names = [agent.name for agent in 子agents]
         agent_descriptions = []
-        for i, agent配置 in enumerate(agents配置列表):
+        for i, agent配置 in enumerate(有效agents配置列表):
             name = agent配置.get("name", f"agent_{i}")
             role = agent配置.get("role", "")
             desc = agent配置.get("description", "")
@@ -103,6 +103,17 @@ def 构建多Agent图(
                 agent_descriptions.append(f"- {name}: {role or desc}")
             else:
                 agent_descriptions.append(f"- {name}")
+
+        if len(子agents) >= 2:
+            示例文本 = (
+                "示例：\n"
+                f"- 调用 transfer_to_{子agents[0].name} 工具\n"
+                f"- 调用 transfer_to_{子agents[1].name} 工具"
+            )
+        elif len(子agents) == 1:
+            示例文本 = f"示例：\n- 调用 transfer_to_{子agents[0].name} 工具"
+        else:
+            示例文本 = ""
 
         prompt = f"""你是一个任务调度主管。你的职责是分析用户请求，并将任务委派给最合适的智能体处理。
 
@@ -117,9 +128,7 @@ def 构建多Agent图(
 5. 【禁止】说"我将分配给xxx"这样的话，直接调用工具即可
 6. 每次只能委派给一个智能体
 
-示例：
-- 用户问题："帮我查询订单" → 调用 transfer_to_抖店助手 工具
-- 用户问题："写一段代码" → 调用 transfer_to_阿维斯 工具"""
+{示例文本}"""
 
         路由规则 = 编排配置.get("routingRules", "").strip()
         if 路由规则:

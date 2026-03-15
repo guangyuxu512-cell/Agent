@@ -51,7 +51,9 @@ async def 组装上下文(
         if msg["role"] == "user":
             消息列表.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant":
-            消息列表.append(AIMessage(content=msg["content"]))
+            内容 = msg.get("content", "")
+            # 历史 assistant 消息只回灌纯文本，避免把 tool_calls 等运行态字段带回图状态。
+            消息列表.append(AIMessage(content=内容))
 
     # ========== 4. 当前用户消息 ==========
     消息列表.append(HumanMessage(content=用户消息))
